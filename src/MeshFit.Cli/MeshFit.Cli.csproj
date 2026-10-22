@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>meshfit</AssemblyName>
+    <RootNamespace>MeshFit.Cli</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MeshFit.Core\MeshFit.Core.csproj" />
+  </ItemGroup>
+</Project>

@@ -47,6 +47,20 @@ that doesn't match, MeshFit falls back to an exact rational B-spline.
   - *Grow to fillets* and *Trim fillets* grow or trim the region at the fillet line.
   - The *Fillet* tool selects a whole constant- or variable-radius blend band with one click.
   - A *Curvature map* overlay shows the feature lines.
+- **Curves to SOLIDWORKS 3D sketches.** The active region's boundary becomes smooth splines, split
+  at corners, ready for Boundary Surface, Trim and Fillet. For a fillet band, the boundaries are
+  its tangent lines.
+- **Fillet measurement.** Select a blend with the Fillet tool and choose *Analyze fillet*. MeshFit
+  fits circles to cross-sections along the band, like a rolling ball, and reports whether the
+  radius is constant or variable. It gives the radius at 0/25/50/75/100% of the length for a
+  SOLIDWORKS variable-size fillet. *Fillet curves → 3D sketch* exports the spine (the ball-centre
+  path) and both tangent lines.
+- **Accuracy analyzer.** Compares every visible body in the part with the scan.
+  - The scan is coloured by its distance to the CAD, with the same legend in mm. Grey means no
+    body is close enough, i.e. that area isn't modelled yet.
+  - You get coverage, RMS, maximum and the share within tolerance, both overall and per body.
+  - Distances are refined to the exact faces, so they don't depend on the tessellation.
+  - The zebra stripes and curvature buttons turn on SOLIDWORKS' own continuity checks.
 - **Selection optimizer and background suggestions.** MeshFit tries growing the selection over
   each surface type, shrinking its edge, trimming outliers and other tolerances, in parallel. It
   then proposes the largest selection that still fits within tolerance. A few brush dots on a

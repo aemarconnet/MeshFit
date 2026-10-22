@@ -164,17 +164,31 @@ namespace MeshFit.SolidWorks
 
         internal IPartDoc ActivePart => _app.ActiveDoc as IPartDoc;
 
-        /// <summary>Computes the curvature field for fillet detection on a worker thread.</summary>
+        private System.Threading.CancellationTokenSource _curvatureCts;
+
+        /// <summary>Computes the curvature field for fillet detection on a worker thread (Esc cancels).</summary>
         internal void ComputeCurvature()
         {
             var mesh = Session.Mesh;
             if (mesh == null) return;
             double scale = Session.FeatureScale > 0 ? Session.FeatureScale : Curvature.DefaultScale(mesh);
+            _curvatureCts?.Cancel();
+            var cts = new System.Threading.CancellationTokenSource();
+            _curvatureCts = cts;
             Session.Curvature = null;
-            Session.Say("Analysing curvature for fillet detection…");
-            System.Threading.Tasks.Task.Run(() => Curvature.Compute(mesh, scale)).ContinueWith(t =>
+            Session.Say("Analysing curvature for fillet detection… (Esc cancels)");
+            int lastPct = -1;
+            var progress = new Progress<double>(f =>
             {
-                if (t.IsFaulted || Session.Mesh != mesh) return;
+                int pct = (int)(f * 100);
+                if (pct / 10 == lastPct / 10 || cts.IsCancellationRequested) return;
+                lastPct = pct;
+                Session.Say($"Analysing curvature for fillet detection… {pct}% (Esc cancels)");
+            });
+            System.Threading.Tasks.Task.Run(() => Curvature.Compute(mesh, scale, cts.Token, progress), cts.Token).ContinueWith(t =>
+            {
+                if (_curvatureCts == cts) _curvatureCts = null;
+                if (t.IsFaulted || t.IsCanceled || Session.Mesh != mesh) return;
                 void Apply()
                 {
                     Session.Curvature = t.Result;
@@ -185,11 +199,21 @@ namespace MeshFit.SolidWorks
             });
         }
 
+        /// <summary>Cancels a running curvature analysis; returns false if none was running.</summary>
+        internal bool CancelCurvature()
+        {
+            var c = _curvatureCts;
+            if (c == null) return false;
+            c.Cancel();
+            _curvatureCts = null;
+            return true;
+        }
+
         // ------------------------------------------------------------------ commands
 
-        internal void LoadMeshFile(string path, double scaleToMetres)
+        /// <summary>Installs a mesh loaded on a worker thread (UI thread).</summary>
+        internal void InstallMesh(TriMesh mesh, string path, double scaleToMetres)
         {
-            var mesh = MeshIO.Load(path, scaleToMetres);
             Session.MeshPath = path;
             Session.MeshScale = scaleToMetres;
             Session.ShowMesh = true;
@@ -197,6 +221,14 @@ namespace MeshFit.SolidWorks
             ComputeCurvature();
             AttachToActiveView(createPartIfNeeded: true);
             ZoomToMesh();
+        }
+
+        internal void UnloadMesh()
+        {
+            CancelCurvature();
+            Suggestions.Cancel();
+            Session.Unload();
+            Redraw();
         }
 
         internal void UseBodies()
@@ -226,19 +258,27 @@ namespace MeshFit.SolidWorks
                 File.Copy(meshPath, dest, true);
                 Session.MeshPath = meshPath = dest;
             }
-            ProjectFile.Save(path, Session.Regions, meshPath, Session.MeshScale);
+            ProjectFile.Save(path, Session.Regions, meshPath, Session.MeshScale, Session.MeshTransform);
         }
 
-        internal void LoadProject(string path)
+        /// <summary>Reads a project and its mesh (worker thread safe: no SOLIDWORKS calls).</summary>
+        internal static (TriMesh mesh, RegionSet regions, ProjectFile.Header header) ReadProject(string path)
         {
             var h = ProjectFile.ReadHeader(path);
             if (string.IsNullOrEmpty(h.MeshPath) || !File.Exists(h.MeshPath))
                 throw new FileNotFoundException("The project's mesh file was not found.", h.MeshPath);
             var mesh = MeshIO.Load(h.MeshPath, h.Scale);
             var regions = ProjectFile.Load(path, mesh);
-            Session.MeshPath = h.MeshPath;
-            Session.MeshScale = h.Scale;
-            Session.SetMesh(mesh, $"{Path.GetFileName(h.MeshPath)}: {mesh.TriangleCount:N0} triangles", regions);
+            return (mesh, regions, h);
+        }
+
+        /// <summary>Installs a project read by <see cref="ReadProject"/> (UI thread), re-applying its placement.</summary>
+        internal void InstallProject((TriMesh mesh, RegionSet regions, ProjectFile.Header header) p)
+        {
+            Session.MeshPath = p.header.MeshPath;
+            Session.MeshScale = p.header.Scale;
+            Session.SetMesh(p.mesh, $"{Path.GetFileName(p.header.MeshPath)}: {p.mesh.TriangleCount:N0} triangles", p.regions);
+            Session.ApplyPlacement(p.header.Transform, record: false);
             ComputeCurvature();
             AttachToActiveView(createPartIfNeeded: true);
             ZoomToMesh();
@@ -248,14 +288,20 @@ namespace MeshFit.SolidWorks
         /// Creates SOLIDWORKS surface features for the given (already fitted) regions.
         /// <paramref name="replace"/> decides per region whether an existing MeshFit surface is deleted first.
         /// </summary>
-        internal string CreateSurfaces(IEnumerable<Region> regions, Func<Region, bool> replace)
+        internal string CreateSurfaces(IEnumerable<Region> regions, Func<Region, bool> replace, Action<string, double?> progress = null)
         {
             var part = ActivePart ?? throw new InvalidOperationException("Activate a part document to create surfaces in.");
             var doc = (IModelDoc2)part;
             var builder = new SwSurfaceBuilder(_app);
             var log = new List<string>();
-            foreach (var r in regions)
+            var list = regions.ToList();
+            using (var bar = BeginSwProgress("MeshFit: creating surfaces", list.Count))
+            for (int i = 0; i < list.Count; i++)
             {
+                var r = list[i];
+                if (EscKey.IsDown()) { log.Add("Stopped (Esc)."); break; }
+                progress?.Invoke($"Creating surface for '{r.Name}' ({i + 1} of {list.Count})", (double)i / list.Count);
+                bar.Update(i, $"MeshFit: creating surface '{r.Name}' ({i + 1}/{list.Count})");
                 if (r.Fit?.Surface == null) { log.Add($"{r.Name}: not fitted"); continue; }
                 try
                 {

@@ -81,7 +81,7 @@ namespace MeshFit.SolidWorks
         /// tessellation and are refined to the exact faces with IFace2.GetClosestPointOn (up to
         /// <paramref name="maxExact"/> points). Returns the report text.
         /// </summary>
-        internal string AnalyzeCad(double maxDistance, int maxExact = 60000)
+        internal string AnalyzeCad(double maxDistance, Action<string, double?> progress = null, int maxExact = 60000)
         {
             var part = ActivePart ?? throw new InvalidOperationException("Activate the part with the surfaces.");
             if (!Session.HasMesh) throw new InvalidOperationException("Load the scan mesh first.");
@@ -95,8 +95,12 @@ namespace MeshFit.SolidWorks
             var idx = new List<int>();
             var triFace = new List<Face2>();
             var triBody = new List<int>();
+            using (var swBar = BeginSwProgress("MeshFit: accuracy analyzer", 100))
+            {
             for (int bi = 0; bi < bodies.Count; bi++)
             {
+                progress?.Invoke($"Tessellating body {bi + 1} of {bodies.Count}", 0.1 * bi / bodies.Count);
+                swBar.Update(10 * bi / bodies.Count, $"MeshFit: tessellating body {bi + 1} of {bodies.Count}");
                 if (!(bodies[bi].GetFaces() is object[] faces)) continue;
                 foreach (Face2 f in faces)
                 {
@@ -121,6 +125,8 @@ namespace MeshFit.SolidWorks
             }
             var cad = new TriMesh(verts.ToArray(), idx.ToArray());
             bool aligned = cad.TriangleCount == triFace.Count;
+            progress?.Invoke("Nearest CAD faces for every scan point (all cores)", 0.12);
+            swBar.Update(12, "MeshFit: comparing scan and CAD");
 
             var scan = Session.Mesh;
             double tol = Session.FitOptions.Tolerance;
@@ -134,6 +140,13 @@ namespace MeshFit.SolidWorks
                 int step = Math.Max(1, covered.Count / Math.Max(1, maxExact));
                 for (int i = 0; i < covered.Count; i += step)
                 {
+                    if ((i / step) % 500 == 0)
+                    {
+                        if (EscKey.IsDown()) break;   // Esc: keep what is refined so far
+                        double f = (double)i / Math.Max(1, covered.Count);
+                        progress?.Invoke($"Exact distances to the faces ({i / step:N0} of {covered.Count / step:N0} points, Esc stops)", 0.15 + 0.8 * f);
+                        swBar.Update(15 + (int)(80 * f), "MeshFit: exact distances to the faces");
+                    }
                     int v = covered[i];
                     var p = scan.Vertices[v];
                     int t = cmp.NearestCadTriangle[v];
@@ -164,6 +177,7 @@ namespace MeshFit.SolidWorks
             lines.Add(exact > 0 ? $"Distances to the exact faces on {exact:N0} points; the rest from the CAD tessellation." :
                                   "Distances from the CAD tessellation.");
             return string.Join(System.Environment.NewLine, lines);
+            }
         }
 
         private static string Format(CadComparison.Stats s) =>

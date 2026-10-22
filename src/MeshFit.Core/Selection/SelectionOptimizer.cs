@@ -42,7 +42,8 @@ namespace MeshFit.Core.Selection
         /// <returns>Candidates, best first. The first entry describing the current selection is "As painted".</returns>
         /// <param name="curvature">When given with <paramref name="blendRadius"/>, growth stops at adjacent fillets.</param>
         public static List<SelectionCandidate> Explore(TriMesh mesh, int[] owners, int regionId, FitOptions options,
-                                                       CancellationToken ct = default, Curvature curvature = null, double blendRadius = 0)
+                                                       CancellationToken ct = default, Curvature curvature = null, double blendRadius = 0,
+                                                       IProgress<string> progress = null)
         {
             var baseMask = new bool[owners.Length];
             int baseCount = 0;
@@ -69,6 +70,7 @@ namespace MeshFit.Core.Selection
                 var ty = type;
                 phase1.Add(() => GrowLoop(mesh, (bool[])baseMask.Clone(), available, options, ty, tol, $"Grow as {ty}", ct));
             }
+            progress?.Report($"Growing the selection as {types.Length} surface type(s)…");
             var results = RunAll(phase1, ct);
 
             // Phase 2: refine only the two most promising types (boundary shrink, outlier trim, tolerance).
@@ -100,6 +102,7 @@ namespace MeshFit.Core.Selection
                         $"Grow as {best} with {ff}× tolerance", ct));
                 }
             }
+            progress?.Report($"Refining the best type(s): {string.Join(", ", top)}…");
             results.AddRange(RunAll(phase2, ct));
             return Rank(results, tol);
         }

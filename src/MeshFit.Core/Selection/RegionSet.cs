@@ -55,7 +55,7 @@ namespace MeshFit.Core.Selection
             public List<Region> Added;
         }
 
-        public TriMesh Mesh { get; }
+        public TriMesh Mesh { get; private set; }
         public IReadOnlyList<Region> Regions => _regions;
         /// <summary>Raised after any change of triangle ownership or the region list.</summary>
         public event EventHandler Changed;
@@ -68,6 +68,14 @@ namespace MeshFit.Core.Selection
         }
 
         public int OwnerOf(int tri) => _owner[tri];
+
+        /// <summary>Swaps in a moved copy of the same mesh (identical triangles), keeping all regions.</summary>
+        public void ReplaceMesh(TriMesh moved)
+        {
+            if (moved.TriangleCount != Mesh.TriangleCount) throw new ArgumentException("The new mesh must have the same triangles.");
+            Mesh = moved;
+            OnChanged();
+        }
         public Region Find(int id) => _regions.FirstOrDefault(r => r.Id == id);
 
         public Region AddRegion(string name = null)

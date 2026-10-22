@@ -51,6 +51,8 @@ namespace MeshFit.SolidWorks
             ("Fit + grow", Cmd.FitAndGrow, "Fit the active region and grow it over its surface", true),
             ("\"Create surface@\"", Cmd.CreateSurface, "Create the SOLIDWORKS surface for the active region", false),
             ("Accuracy analyzer", Cmd.AnalyzeCad, "Colour the scan by its distance to the bodies in the part", false),
+            ("Position mesh…", Cmd.PositionMesh, "Open the wizard that places the mesh relative to the part origin", false),
+            ("\"Unload mesh@\"", Cmd.UnloadMesh, "Remove the mesh from MeshFit (offers to save the project)", false),
             ("Hide MeshFit surfaces", Cmd.HideSurfaces, "Hide all surfaces created by MeshFit", false),
             ("Show MeshFit surfaces", Cmd.ShowSurfaces, "Show all surfaces created by MeshFit", false),
         };
@@ -223,6 +225,8 @@ namespace MeshFit.SolidWorks
         public void OnMenuAnalyzeFillet() => Menu(Cmd.AnalyzeFillet);
         public void OnMenuBoundaryToSketch() => Menu(Cmd.BoundaryToSketch);
         public void OnMenuAnalyzeCad() => Menu(Cmd.AnalyzeCad);
+        public void OnMenuPositionMesh() => Menu(Cmd.PositionMesh);
+        public void OnMenuUnloadMesh() => Menu(Cmd.UnloadMesh);
         public void OnMenuTrimFillets() => Menu(Cmd.TrimFillets);
         public void OnMenuToolOff() => Menu(Cmd.ToolOff);
         public void OnMenuModeAdd() => Menu(Cmd.ModeAdd);
@@ -252,6 +256,8 @@ namespace MeshFit.SolidWorks
         public int OnMenuEnableAnalyzeFillet() => Enable(Cmd.AnalyzeFillet);
         public int OnMenuEnableBoundaryToSketch() => Enable(Cmd.BoundaryToSketch);
         public int OnMenuEnableAnalyzeCad() => Enable(Cmd.AnalyzeCad);
+        public int OnMenuEnablePositionMesh() => Enable(Cmd.PositionMesh);
+        public int OnMenuEnableUnloadMesh() => Enable(Cmd.UnloadMesh);
         public int OnMenuEnableTrimFillets() => Enable(Cmd.TrimFillets);
         public int OnMenuEnableToolOff() => Enable(Cmd.ToolOff);
         public int OnMenuEnableModeAdd() => Enable(Cmd.ModeAdd);

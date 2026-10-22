@@ -17,6 +17,8 @@ namespace MeshFit.Core.Fitting
         public abstract Vec3 Project(Vec3 p);
         /// <summary>Human readable description. <paramref name="lengthScale"/> converts model units to display units.</summary>
         public abstract string Describe(double lengthScale, string unit);
+        /// <summary>The same surface moved by a rigid transform.</summary>
+        public abstract FittedSurface Transformed(RigidTransform x);
 
         protected static string F(double v) => v.ToString("0.####", CultureInfo.InvariantCulture);
         protected static string Deg(double rad) => (rad * 180 / Math.PI).ToString("0.###", CultureInfo.InvariantCulture) + "°";
@@ -56,6 +58,7 @@ namespace MeshFit.Core.Fitting
         public override bool PeriodicS => false;
         public override bool PeriodicT => false;
         public override AnalyticSurface WithFrame(Frame f) => new PlaneSurface(f.Origin, Normal, f.XAxis);
+        public override FittedSurface Transformed(RigidTransform x) => new PlaneSurface(x.Apply(Origin), x.ApplyVector(Normal), x.ApplyVector(_frame.XAxis));
         public override string Describe(double k, string u) =>
             $"Plane  normal {Normal}  through {Origin * k} {u}";
     }
@@ -87,6 +90,7 @@ namespace MeshFit.Core.Fitting
         public override bool PeriodicS => true;
         public override bool PeriodicT => false;
         public override AnalyticSurface WithFrame(Frame f) => new SphereSurface(Center, Radius, f);
+        public override FittedSurface Transformed(RigidTransform x) => new SphereSurface(x.Apply(Center), Radius, x.Apply(_frame));
         public override string Describe(double k, string u) =>
             $"Sphere  center {Center * k} {u}  R {F(Radius * k)} {u}";
     }
@@ -127,6 +131,7 @@ namespace MeshFit.Core.Fitting
         public override bool PeriodicS => true;
         public override bool PeriodicT => false;
         public override AnalyticSurface WithFrame(Frame f) => new CylinderSurface(f.Origin, Axis, Radius, f.XAxis);
+        public override FittedSurface Transformed(RigidTransform x) => new CylinderSurface(x.Apply(AxisPoint), x.ApplyVector(Axis), Radius, x.ApplyVector(_frame.XAxis));
         public override string Describe(double k, string u) =>
             $"Cylinder  axis {Axis}  through {AxisPoint * k} {u}  R {F(Radius * k)} {u}";
     }
@@ -191,6 +196,8 @@ namespace MeshFit.Core.Fitting
             double h = (f.Origin - Center).Dot(Axis);
             return new ConeSurface(Center + Axis * h, Axis, RadiusAt(h), HalfAngle, f.XAxis);
         }
+        public override FittedSurface Transformed(RigidTransform x) =>
+            new ConeSurface(x.Apply(Center), x.ApplyVector(Axis), Radius, HalfAngle, x.ApplyVector(_frame.XAxis));
         public override string Describe(double k, string u) =>
             $"Cone  axis {Axis}  half-angle {Deg(HalfAngle)}  R {F(Radius * k)} {u} at {Center * k} {u}";
     }
@@ -239,6 +246,7 @@ namespace MeshFit.Core.Fitting
         public override bool PeriodicS => true;
         public override bool PeriodicT => true;
         public override AnalyticSurface WithFrame(Frame f) => new TorusSurface(Center, Axis, MajorRadius, MinorRadius, f.XAxis);
+        public override FittedSurface Transformed(RigidTransform x) => new TorusSurface(x.Apply(Center), x.ApplyVector(Axis), MajorRadius, MinorRadius, x.ApplyVector(_frame.XAxis));
         public override string Describe(double k, string u) =>
             $"Torus  axis {Axis}  center {Center * k} {u}  R {F(MajorRadius * k)} {u}  r {F(MinorRadius * k)} {u}";
     }
@@ -266,6 +274,14 @@ namespace MeshFit.Core.Fitting
             var n = su.Cross(sv);
             double d = (p - q).Length;
             return (p - q).Dot(n) < 0 ? -d : d;
+        }
+        public override FittedSurface Transformed(RigidTransform x)
+        {
+            var c = new Vec3[Nurbs.CountU, Nurbs.CountV];
+            for (int i = 0; i < Nurbs.CountU; i++)
+                for (int j = 0; j < Nurbs.CountV; j++) c[i, j] = x.Apply(Nurbs.ControlPoints[i, j]);
+            var n = new NurbsSurface(Nurbs.DegreeU, Nurbs.DegreeV, Nurbs.KnotsU, Nurbs.KnotsV, c, Nurbs.Weights);
+            return new FreeformSurface(n, x.Apply(BaseFrame));
         }
         public override string Describe(double k, string u) =>
             $"Freeform B-spline  degree {Nurbs.DegreeU}x{Nurbs.DegreeV}  {Nurbs.CountU}x{Nurbs.CountV} control points";

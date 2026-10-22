@@ -18,14 +18,25 @@ namespace MeshFit.SolidWorks
     /// </summary>
     internal sealed class TaskPaneControl : UserControl
     {
-        private const int W = 280;
+        private const int W = 290;
         private readonly SwAddin _addin;
         private Session S => _addin.Session;
         private readonly ToolTip _tips = new ToolTip { AutoPopDelay = 15000, InitialDelay = 400 };
 
         // header
-        private Label _guide, _activeLabel;
-        private Panel _activeSwatch;
+        private Label _guide;
+        private ComboBox _activeCombo;
+        private TabControl _tabs;
+        private Button _cancel;
+        private FlowLayoutPanel _progressPanel;
+        private Label _progressLabel;
+        private ProgressBar _progressBar;
+        private readonly System.Diagnostics.Stopwatch _progressClock = new System.Diagnostics.Stopwatch();
+        private string _progressStage;
+        private double? _progressFraction;
+        private PositionDialog _positionDialog;
+        private TextBox _accuracyText;
+        private System.Threading.CancellationTokenSource _cts;
         private Button _undo, _redo;
         private readonly Dictionary<PaintTool, CheckBox> _toolButtons = new Dictionary<PaintTool, CheckBox>();
         private CheckBox _addMode, _removeMode;
@@ -43,13 +54,12 @@ namespace MeshFit.SolidWorks
         private ComboBox _units;
         private readonly Dictionary<FitRequest, CheckBox> _typeButtons = new Dictionary<FitRequest, CheckBox>();
         private Label _meshInfo, _status, _hoverReadout;
-        private CheckBox _showMesh, _showRegions, _activeOnly, _rejectOutliers, _showPreview, _showDeviation, _advanced;
+        private CheckBox _showMesh, _showRegions, _activeOnly, _rejectOutliers, _showPreview, _showDeviation;
         private ListView _regions;
         private ImageList _swatches;
         private NumericUpDown _segAngle, _segMin, _tolerance, _margin, _ctrlU, _ctrlV, _smoothExp, _islandLimit;
         private TextBox _result;
         private DeviationLegend _legend;
-        private Control _advancedPanel;
         private bool _busy, _updating;
 
         private static readonly (FitRequest req, string tip)[] TypeTips =
@@ -87,6 +97,7 @@ namespace MeshFit.SolidWorks
             };
             S.HoverChanged += UpdateHoverReadout;
             S.Status += SetStatus;
+            StartEscWatcher();
             RefreshAll();
         }
 
@@ -94,36 +105,65 @@ namespace MeshFit.SolidWorks
 
         private void BuildUi()
         {
-            var body = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
             var header = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false,
-                AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(4, 4, 4, 2),
+                AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(3, 3, 3, 1),
                 BackColor = SystemColors.ControlLight
             };
-            Controls.Add(body);
+            _tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(6, 3) };
+            Controls.Add(_tabs);
             Controls.Add(header); // added last = docked first (top)
 
-            // ---- header ------------------------------------------------------------
+            // ---- header: what is needed on every tab -------------------------------------
             _guide = new Label
             {
-                AutoSize = true, MaximumSize = new Size(W - 8, 0), Padding = new Padding(4),
-                BackColor = Color.FromArgb(255, 248, 205), BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 0, 0, 4)
+                AutoSize = true, MaximumSize = new Size(W - 6, 0), Padding = new Padding(3),
+                BackColor = Color.FromArgb(255, 248, 205), BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 0, 0, 3)
             };
             header.Controls.Add(_guide);
 
             _undo = Btn("↶ Undo", () => Execute(Cmd.Undo), "Undo the last paint step (also region delete/merge)");
             _redo = Btn("↷ Redo", () => Execute(Cmd.Redo), "Redo");
-            _activeSwatch = new Panel { Width = 14, Height = 14, Margin = new Padding(8, 7, 2, 0), BorderStyle = BorderStyle.FixedSingle };
-            _activeLabel = new Label { AutoSize = true, Padding = new Padding(0, 7, 0, 0), Font = new Font(Font, FontStyle.Bold) };
-            header.Controls.Add(Row(_undo, _redo, _activeSwatch, _activeLabel));
+            _activeCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 120, DrawMode = DrawMode.OwnerDrawFixed };
+            _activeCombo.DrawItem += (s, e) =>
+            {
+                e.DrawBackground();
+                if (e.Index < 0) return;
+                var r = (Region)_activeCombo.Items[e.Index];
+                using (var b = new SolidBrush(Color.FromArgb(255, Color.FromArgb(r.Color)))) e.Graphics.FillRectangle(b, e.Bounds.X + 2, e.Bounds.Y + 2, 10, e.Bounds.Height - 4);
+                TextRenderer.DrawText(e.Graphics, $"{r.Name} ({r.TriangleCount:N0})", e.Font, new Point(e.Bounds.X + 15, e.Bounds.Y + 1), e.ForeColor);
+            };
+            _activeCombo.SelectedIndexChanged += (s, e) =>
+            {
+                if (_updating || _activeCombo.SelectedItem == null) return;
+                S.ActiveRegion = (Region)_activeCombo.SelectedItem;
+                S.RaiseChanged();
+            };
+            _tips.SetToolTip(_activeCombo, "Active region: the region the tools paint into and the commands act on");
+            _cancel = Btn("✖ Cancel (Esc)", CancelWork, "Abort the running operation (same as pressing Esc)");
+            _cancel.ForeColor = Color.DarkRed;
+            header.Controls.Add(Row(_undo, _redo, _activeCombo));
+
+            // Progress strip: task, step, % and elapsed time, with Cancel (Esc). Shown only while working.
+            _progressPanel = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Visible = false,
+                BackColor = Color.FromArgb(225, 235, 250), Padding = new Padding(3), Margin = new Padding(0, 2, 0, 2)
+            };
+            _progressLabel = new Label { AutoSize = true, MaximumSize = new Size(W - 14, 0), Font = new Font(Font, FontStyle.Bold) };
+            _progressBar = new ProgressBar { Width = W - 120, Height = 14, Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 30 };
+            _tips.SetToolTip(_progressBar, "Progress of the running task (moving bar = step of unknown length)");
+            _progressPanel.Controls.Add(_progressLabel);
+            _progressPanel.Controls.Add(Row(_progressBar, _cancel));
+            header.Controls.Add(_progressPanel);
 
             var tools = new[]
             {
-                (PaintTool.None, "Off", "No paint tool: SOLIDWORKS works normally."),
-                (PaintTool.SmartFill, "Smart fill", "Click or drag: fills smooth areas up to edges sharper than the angle."),
+                (PaintTool.None, "Off", "No paint tool: SOLIDWORKS works normally (Esc)."),
+                (PaintTool.SmartFill, "Smart fill", "Click or drag: fills smooth areas up to edges sharper than the angle (and fillets when 'Stop at fillets' is on)."),
                 (PaintTool.Brush, "Brush", "Drag to paint inside the brush circle. Ctrl+click paints a straight line from the last painted point (view direction), blending the brush size. Ctrl/Shift + wheel resizes."),
-                (PaintTool.FillConnected, "Fill shell", "Click to fill a whole connected piece of mesh."),
+                (PaintTool.FillConnected, "Shell", "Click to fill a whole connected piece of mesh."),
                 (PaintTool.Fillet, "Fillet", "Click a fillet or blend (constant or variable radius) to select the whole band, detected from curvature."),
                 (PaintTool.PickRegion, "Pick", "Click painted triangles to make their region active."),
             };
@@ -145,42 +185,73 @@ namespace MeshFit.SolidWorks
             _brushDiameter.ValueChanged += (s, e) => { if (!_updating) { S.BrushRadius = (double)_brushDiameter.Value / 2000; _addin.Redraw(); } };
             _smartAngle = Num(0.5m, 90, (decimal)S.SmartAngleDeg, 1, "Smart fill stops at edges sharper than this angle (degrees). Lower = stricter.");
             _smartAngle.ValueChanged += (s, e) => S.SmartAngleDeg = (double)_smartAngle.Value;
+            _brushDiameter.Width = _smartAngle.Width = 52;
             header.Controls.Add(Row(_addMode, _removeMode, Lbl("Ø mm"), _brushDiameter, Lbl("∠°"), _smartAngle));
 
-            // ---- body --------------------------------------------------------------
-            var root = new FlowLayoutPanel
-            {
-                FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink, Location = new Point(0, 0), Padding = new Padding(4)
-            };
-            body.Controls.Add(root);
+            _legend = new DeviationLegend(() => (double)_tolerance.Value) { Width = W - 10, Height = 30, Visible = false };
+            _tips.SetToolTip(_legend, "Deviation colours: blue = below the surface, green = on it, red = above, magenta = beyond ±tolerance, grey = not modelled");
+            header.Controls.Add(_legend);
+            _hoverReadout = new Label { AutoSize = true, Visible = false, Text = "Move the cursor over the mesh to read the deviation." };
+            header.Controls.Add(_hoverReadout);
+            _status = new Label { AutoSize = true, MaximumSize = new Size(W - 6, 0), Text = "Ready.", ForeColor = Color.DimGray };
+            header.Controls.Add(_status);
 
-            // 1. Mesh
-            var g1 = Group("Mesh");
+            // ---- tab: Mesh -------------------------------------------------------------------
+            var tMesh = Tab("Mesh", "Load, unload and position the scan; project files; settings");
+            var g1 = Group("Scan");
             _units = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 50 };
             foreach (var u in Units) _units.Items.Add(u.name);
             _units.SelectedIndex = 0;
             _tips.SetToolTip(_units, "Units the mesh file was saved in");
             g1.Add(Row(Btn("Load mesh file…", LoadMesh, "Load an STL/OBJ/PLY scan (drawn as an overlay)"), Lbl("units"), _units));
-            g1.Add(Btn("Use bodies in part", () => Run(() => { _addin.UseBodies(); return "Mesh taken from SOLIDWORKS bodies."; }),
-                       "Use the selected mesh body (or all bodies of the part) as the mesh"));
-            _meshInfo = new Label { AutoSize = true, MaximumSize = new Size(W - 20, 0) };
+            g1.Add(Row(Btn("Use bodies in part", () => Run(() => { Report("Reading the facets of the SOLIDWORKS bodies", null); _addin.UseBodies(); return "Mesh taken from SOLIDWORKS bodies."; }, title: "Reading bodies"),
+                           "Use the selected mesh body (or all bodies of the part) as the mesh"),
+                       Btn("Unload mesh", UnloadMesh, "Remove the mesh and its painted regions from MeshFit (offers to save the project first). SOLIDWORKS bodies are not touched.")));
+            _meshInfo = new Label { AutoSize = true, MaximumSize = new Size(W - 24, 0) };
             g1.Add(_meshInfo);
+            g1.Add(Row(Btn("Position mesh…", PositionMesh, "Move the mesh relative to the part origin: numeric, mate-like (planes/axes/points) or automatic"),
+                       Btn("Zoom to mesh", () => _addin.ZoomToMesh(), "Zoom the view to fit the whole mesh")));
             _showMesh = Check("Mesh", true, v => { S.ShowMesh = v; S.RaiseChanged(); }, "Show the mesh overlay");
             _showRegions = Check("Paint", true, v => { S.ShowRegions = v; S.RaiseChanged(); }, "Show painted regions");
-            g1.Add(Row(Lbl("Show:"), _showMesh, _showRegions, Btn("Zoom to mesh", () => _addin.ZoomToMesh(), "Zoom the view to fit the whole mesh")));
-            root.Controls.Add(g1.Box);
+            g1.Add(Row(Lbl("Show:"), _showMesh, _showRegions));
+            tMesh.Add(g1.Box);
 
-            // 2. Regions
-            var g2 = Group("Regions  (right-click a region for more)");
+            var gp = Group("Project");
+            gp.Add(Row(Btn("Save project…", SaveProject, "Save the painted regions, mesh reference and mesh position to a .meshfit file"),
+                       Btn("Open project…", OpenProject, "Reopen a saved .meshfit project")));
+            tMesh.Add(gp.Box);
+
+            var gs = Group("Settings");
+            _activeOnly = Check("Tools only affect the active region", true, v => S.ActiveRegionOnly = v,
+                "Add never steals triangles from other regions; Remove only unselects the active region");
+            gs.Add(_activeOnly);
+            _islandLimit = Num(0, 1000000, S.AutoFillIslandLimit, 0, "After each Smart fill, enclosed unpainted islands up to this many triangles are filled automatically (0 = off)");
+            _islandLimit.ValueChanged += (s, e) => S.AutoFillIslandLimit = (int)_islandLimit.Value;
+            gs.Add(Row(Lbl("Auto-fill islands up to"), _islandLimit, Lbl("tris")));
+            _margin = Num(0, 200, 10, 0, "How far created surfaces extend past the painted region (% of its size)");
+            _rejectOutliers = Check("Reject outliers", true, v => S.FitOptions.RejectOutliers = v, "Ignore stray points when fitting analytic surfaces");
+            gs.Add(Row(Lbl("Extend %"), _margin, _rejectOutliers));
+            _ctrlU = Num(0, 200, 0, 0, "Freeform control points along u (0 = automatic)");
+            _ctrlV = Num(0, 200, 0, 0, "Freeform control points along v (0 = automatic)");
+            _smoothExp = Num(-14, -2, -10, 0, "Freeform smoothing 10^x. Higher (e.g. -8) = fairer, lower = closer to the scan");
+            gs.Add(Row(Lbl("Freeform CP u"), _ctrlU, Lbl("v"), _ctrlV));
+            gs.Add(Row(Lbl("Freeform smoothing 1e"), _smoothExp));
+            _featureScale = Num(0, 1000, 0, 2, "Neighbourhood (mm) used to estimate curvature. Larger = less sensitive to scan noise, smaller = resolves tighter fillets. 0 = automatic (4× mesh edge length).");
+            gs.Add(Row(Lbl("Curvature scale mm"), _featureScale,
+                Btn("Recompute", () => { S.FeatureScale = (double)_featureScale.Value / 1000; _addin.ComputeCurvature(); }, "Recompute curvature with this scale")));
+            tMesh.Add(gs.Box);
+
+            // ---- tab: Regions ----------------------------------------------------------------
+            var tReg = Tab("Regions", "Region list and selection tools");
             _swatches = new ImageList { ImageSize = new Size(12, 12) };
             _regions = new ListView
             {
                 View = View.Details, FullRowSelect = true, HideSelection = false, MultiSelect = true,
-                LabelEdit = true, Width = W - 16, Height = 140, SmallImageList = _swatches
+                LabelEdit = true, Width = W - 10, Height = 230, SmallImageList = _swatches
             };
-            _regions.Columns.Add("Region", 88); _regions.Columns.Add("Type", 58);
+            _regions.Columns.Add("Region", 92); _regions.Columns.Add("Type", 58);
             _regions.Columns.Add("Max dev mm", 66); _regions.Columns.Add("Status", 54);
+            _tips.SetToolTip(_regions, "Click to activate, double-click to rename, Ctrl+click to multi-select, right-click for all region commands");
             _regions.SelectedIndexChanged += (s, e) =>
             {
                 if (_updating || _regions.SelectedItems.Count == 0) return;
@@ -195,66 +266,23 @@ namespace MeshFit.SolidWorks
             };
             _regions.DoubleClick += (s, e) => _regions.SelectedItems.Cast<ListViewItem>().FirstOrDefault()?.BeginEdit();
             _regions.ContextMenuStrip = BuildRegionMenu();
-            g2.Add(_regions);
-            g2.Add(Row(Btn("New region", () => Execute(Cmd.NewRegion), "Start the next surface"),
-                       Btn("Fill islands", () => Execute(Cmd.FillIslands), "Fill unpainted islands completely enclosed by the active region"),
-                       Btn("Clear", () => Execute(Cmd.ClearRegion), "Unselect every triangle of the active region")));
-            g2.Add(Row(Btn("Grow ring", () => Execute(Cmd.GrowRing), "Add one ring of triangles around the region"),
-                       Btn("Shrink ring", () => Execute(Cmd.ShrinkRing), "Remove the outer ring of triangles"),
-                       Btn("Clean up", () => Execute(Cmd.CleanUp), "Remove stray specks, fill enclosed holes and smooth the jagged brush edge")));
-            g2.Add(Row(Btn("Optimize selection", () => Execute(Cmd.Optimize),
-                           "Try growing, shrinking and trimming the selection (in parallel) and list the alternatives ranked by fit"),
-                       Btn("Delete", DeleteRegions, "Delete the selected regions (undoable)")));
-            root.Controls.Add(g2.Box);
+            tReg.Add(_regions);
+            tReg.Add(Row(Btn("New region", () => Execute(Cmd.NewRegion), "Start the next surface"),
+                         Btn("Fill islands", () => Execute(Cmd.FillIslands), "Fill unpainted islands completely enclosed by the active region"),
+                         Btn("Clean up", () => Execute(Cmd.CleanUp), "Remove stray specks, fill enclosed holes and smooth the jagged brush edge")));
+            tReg.Add(Row(Btn("Grow ring", () => Execute(Cmd.GrowRing), "Add one ring of triangles around the region"),
+                         Btn("Shrink ring", () => Execute(Cmd.ShrinkRing), "Remove the outer ring of triangles"),
+                         Btn("Clear", () => Execute(Cmd.ClearRegion), "Unselect every triangle of the active region")));
+            tReg.Add(Row(Btn("Optimize selection", () => Execute(Cmd.Optimize),
+                             "Try growing, shrinking and trimming the selection (in parallel) and list the alternatives ranked by fit (Esc cancels)"),
+                         Btn("Merge", MergeRegions, "Merge the selected regions into the first one"),
+                         Btn("Delete", DeleteRegions, "Delete the selected regions (undoable)")));
+            _segAngle = Num(1, 90, 20, 0, "Edge angle for automatic segmentation");
+            _segMin = Num(1, 1000000, 200, 0, "Smallest patch kept by automatic segmentation");
+            tReg.Add(Row(Btn("Auto segment", AutoSegment, "Split all unpainted triangles into smooth patches"), Lbl("∠°"), _segAngle, Lbl("min"), _segMin));
 
-            // Adjacent features (fillets / blends)
-            var gf = Group("Adjacent fillets & blends");
-            _stopAtFillets = Check("Stop at fillets", true, v => { S.StopAtFillets = v; _addin.Suggestions.Poke(); },
-                "Smart fill, Fit + grow and the optimizer stop where a tangent fillet or blend starts");
-            _blendRadius = Num(0.5m, 10000, (decimal)(S.BlendRadius * 1000), 1,
-                "Blends tighter than this radius (mm) count as adjacent features. Use roughly 1.5× the largest fillet you want detected.");
-            _blendRadius.ValueChanged += (s, e) => { S.BlendRadius = (double)_blendRadius.Value / 1000; if (S.ShowCurvature) S.RaiseChanged(); };
-            gf.Add(Row(_stopAtFillets, Lbl("fillets up to R mm"), _blendRadius));
-            gf.Add(Row(Btn("Grow to fillets", () => Execute(Cmd.GrowToFillets), "Grow the active region over unpainted triangles until it reaches adjacent fillets or sharp edges"),
-                       Btn("Trim fillets", () => Execute(Cmd.TrimFillets), "Remove the part of the active region that runs into adjacent fillets (tangent run-out)")));
-            _showCurvature = Check("Curvature map", false, v => { S.ShowCurvature = v; S.RaiseChanged(); },
-                "Colour the mesh by curvature: grey = flat, orange/red = fillets and feature lines");
-            gf.Add(_showCurvature);
-            root.Controls.Add(gf.Box);
-
-            // Curves & fillet measurement
-            var gc = Group("Curves & fillet measurement");
-            _cornerAngle = Num(5, 180, 50, 0, "Boundary curves are split into separate splines where they turn sharper than this angle (degrees)");
-            gc.Add(Row(Btn("Boundary → 3D sketch", () => Execute(Cmd.BoundaryToSketch),
-                           "Create a 3D sketch with smooth splines along the active region's boundary (trim lines, fillet tangent lines)"),
-                       Lbl("split at °"), _cornerAngle));
-            _filletSketch = Btn("Fillet curves → 3D sketch", () => Execute(Cmd.FilletToSketch),
-                "Create a 3D sketch with the measured fillet's spine (ball centre path) and both tangent lines");
-            _filletSketch.Enabled = false;
-            gc.Add(Row(Btn("Analyze fillet", () => Execute(Cmd.AnalyzeFillet),
-                           "Measure the active region as a fillet band: cross-section circles along its length give a constant or variable radius"),
-                       _filletSketch));
-            _analysisText = new TextBox { Multiline = true, ReadOnly = true, Width = W - 16, Height = 80, ScrollBars = ScrollBars.Vertical };
-            _tips.SetToolTip(_analysisText, "Fillet measurement and accuracy analyzer results (mm)");
-            gc.Add(_analysisText);
-            root.Controls.Add(gc.Box);
-
-            // Accuracy analyzer
-            var ga = Group("Accuracy analyzer (CAD vs scan)");
-            _cadMaxDist = Num(0.01m, 1000, 1.0m, 2, "Scan farther than this (mm) from every body counts as 'not modelled' (grey) and is left out of the statistics");
-            ga.Add(Row(Btn("Analyze bodies", () => Execute(Cmd.AnalyzeCad),
-                           "Compare every visible surface/solid body in the part with the scan; the scan is coloured by deviation (legend uses the fit tolerance)"),
-                       Lbl("ignore > mm"), _cadMaxDist));
-            _showCad = Check("Show CAD deviation", false, v => { S.ShowCadDeviation = v; UpdateLegendVisibility(); S.RaiseChanged(); },
-                "Colour the scan by its distance to the CAD bodies (blue below, red above, magenta out of tolerance, grey not modelled)");
-            ga.Add(Row(_showCad,
-                       Btn("Zebra stripes", () => Execute(Cmd.ToggleZebra),
-                           "Toggle SOLIDWORKS zebra stripes to judge surface continuity"),
-                       Btn("Curvature", () => _addin.ToggleSwCurvature(), "Toggle SOLIDWORKS curvature display on the bodies")));
-            root.Controls.Add(ga.Box);
-
-            // 3. Fit
-            var g3 = Group("Fit");
+            // ---- tab: Fit ------------------------------------------------------------------
+            var tFit = Tab("Fit", "Surface type, tolerance, fitting and suggestions");
             var typeRow = Row();
             foreach (var (req, tip) in TypeTips)
             {
@@ -274,85 +302,122 @@ namespace MeshFit.SolidWorks
                 _typeButtons[req] = b;
                 typeRow.Controls.Add(b);
             }
-            g3.Add(Lbl("Surface type for the active region:"));
-            g3.Add(typeRow);
+            tFit.Add(typeRow);
             _tolerance = Num(0.001m, 100, 0.2m, 3, "Allowed deviation in mm. Drives Auto type choice, Grow and the deviation colours.");
-            _tolerance.ValueChanged += (s, e) => { ApplyFitSettings(); _legend.Invalidate(); if (S.ShowDeviation) S.RaiseChanged(); };
-            g3.Add(Row(Lbl("Tolerance mm"), _tolerance));
+            _tolerance.ValueChanged += (s, e) => { ApplyFitSettings(); _legend.Invalidate(); if (S.ShowDeviation || S.ShowCadDeviation) S.RaiseChanged(); };
             var fitGrow = Btn("Fit + grow", () => Execute(Cmd.FitAndGrow),
-                "Fit the active region, extend it to every connected triangle within tolerance of the surface, refit; repeat until it stops growing.");
+                "Fit the active region, extend it to every connected triangle within tolerance of the surface, refit; repeat until it stops growing (Esc cancels).");
             fitGrow.Font = new Font(Font, FontStyle.Bold);
-            g3.Add(Row(fitGrow, Btn("Fit only", () => Execute(Cmd.Fit), "Fit without growing"),
-                       Btn("Fit all", () => FitRegions(All()), "Fit every painted region")));
+            tFit.Add(Row(Lbl("Tol. mm"), _tolerance, fitGrow));
+            tFit.Add(Row(Btn("Fit only", () => Execute(Cmd.Fit), "Fit without growing"),
+                         Btn("Fit all", () => FitRegions(All()), "Fit every painted region (Esc cancels)"),
+                         Btn("Grow to surface", GrowToSurface, "Add connected triangles within tolerance of the current fit")));
             _showPreview = Check("Preview surface", true, v => { S.ShowPreview = v; S.RaiseChanged(); }, "Draw iso-lines of the fitted surfaces");
             _showDeviation = Check("Deviation map", false, v => { S.ShowDeviation = v; UpdateLegendVisibility(); S.RaiseChanged(); },
-                "Colour fitted regions by their distance to the surface");
-            g3.Add(Row(_showPreview, _showDeviation));
-            _legend = new DeviationLegend(() => (double)_tolerance.Value) { Width = W - 20, Height = 34, Visible = false };
-            g3.Add(_legend);
-            _hoverReadout = new Label { AutoSize = true, Visible = false, Text = "Move the cursor over a fitted region to read its deviation." };
-            g3.Add(_hoverReadout);
-            _result = new TextBox { Multiline = true, ReadOnly = true, Width = W - 16, Height = 96, ScrollBars = ScrollBars.Vertical };
-            g3.Add(_result);
+                "Colour fitted regions by their distance to the surface (legend at the top)");
+            tFit.Add(Row(_showPreview, _showDeviation));
+            _result = new TextBox { Multiline = true, ReadOnly = true, Width = W - 10, Height = 110, ScrollBars = ScrollBars.Vertical };
+            _tips.SetToolTip(_result, "Fit report of the active region (mm)");
+            tFit.Add(_result);
             _suggestOn = Check("Suggest better selections in the background", true, v =>
             {
                 _addin.Suggestions.Enabled = v;
                 if (!v) { _addin.Suggestions.Cancel(); ShowSuggestion(null, null); } else _addin.Suggestions.Poke();
             }, "After you paint, MeshFit tries growing/shrinking/trimming the region and other surface types on spare CPU cores, and offers the best-fitting selection");
-            g3.Add(_suggestOn);
+            tFit.Add(_suggestOn);
             _suggestText = new Label
             {
-                AutoSize = true, MaximumSize = new Size(W - 20, 0), Visible = false, Padding = new Padding(3),
+                AutoSize = true, MaximumSize = new Size(W - 14, 0), Visible = false, Padding = new Padding(3),
                 BackColor = Color.FromArgb(220, 240, 220), BorderStyle = BorderStyle.FixedSingle
             };
-            g3.Add(_suggestText);
+            tFit.Add(_suggestText);
             _suggestApply = Btn("Apply suggestion", () => Execute(Cmd.ApplySuggestion), "Replace the region's selection with the suggested one (undoable)");
             _suggestDismiss = Btn("Dismiss", () => ShowSuggestion(null, null), "Ignore this suggestion");
             _suggestApply.Visible = _suggestDismiss.Visible = false;
-            g3.Add(Row(_suggestApply, _suggestDismiss));
-            root.Controls.Add(g3.Box);
+            tFit.Add(Row(_suggestApply, _suggestDismiss));
 
-            // 4. Surfaces
+            // ---- tab: Fillets ----------------------------------------------------------------
+            var tFil = Tab("Fillets", "Adjacent fillet detection, fillet measurement and curves");
+            var gf = Group("Adjacent fillets & blends");
+            _stopAtFillets = Check("Stop at fillets", true, v => { S.StopAtFillets = v; _addin.Suggestions.Poke(); },
+                "Smart fill, Fit + grow and the optimizer stop where a tangent fillet or blend starts");
+            _blendRadius = Num(0.5m, 10000, (decimal)(S.BlendRadius * 1000), 1,
+                "Blends tighter than this radius (mm) count as adjacent features. Use roughly 1.5× the largest fillet you want detected.");
+            _blendRadius.ValueChanged += (s, e) => { S.BlendRadius = (double)_blendRadius.Value / 1000; if (S.ShowCurvature) S.RaiseChanged(); };
+            gf.Add(Row(_stopAtFillets, Lbl("up to R mm"), _blendRadius));
+            gf.Add(Row(Btn("Grow to fillets", () => Execute(Cmd.GrowToFillets), "Grow the active region over unpainted triangles until it reaches adjacent fillets or sharp edges"),
+                       Btn("Trim fillets", () => Execute(Cmd.TrimFillets), "Remove the part of the active region that runs into adjacent fillets (tangent run-out)")));
+            _showCurvature = Check("Curvature map", false, v => { S.ShowCurvature = v; S.RaiseChanged(); },
+                "Colour the mesh by curvature: grey = flat, orange/red = fillets and feature lines");
+            gf.Add(_showCurvature);
+            tFil.Add(gf.Box);
+
+            var gc = Group("Measure & export curves");
+            _filletSketch = Btn("Fillet curves → 3D sketch", () => Execute(Cmd.FilletToSketch),
+                "Create a 3D sketch with the measured fillet's spine (ball centre path) and both tangent lines");
+            _filletSketch.Enabled = false;
+            gc.Add(Row(Btn("Analyze fillet", () => Execute(Cmd.AnalyzeFillet),
+                           "Measure the active region as a fillet band: cross-section circles along its length give a constant or variable radius"),
+                       _filletSketch));
+            _cornerAngle = Num(5, 180, 50, 0, "Boundary curves are split into separate splines where they turn sharper than this angle (degrees)");
+            gc.Add(Row(Btn("Boundary → 3D sketch", () => Execute(Cmd.BoundaryToSketch),
+                           "Create a 3D sketch with smooth splines along the active region's boundary (trim lines, fillet tangent lines)"),
+                       Lbl("split °"), _cornerAngle));
+            _analysisText = new TextBox { Multiline = true, ReadOnly = true, Width = W - 20, Height = 120, ScrollBars = ScrollBars.Vertical };
+            _tips.SetToolTip(_analysisText, "Fillet measurement (mm)");
+            gc.Add(_analysisText);
+            tFil.Add(gc.Box);
+
+            // ---- tab: Output -----------------------------------------------------------------
+            var tOut = Tab("Output", "SOLIDWORKS surfaces, accuracy analyzer and export");
             var g4 = Group("SOLIDWORKS surfaces");
             g4.Add(Row(Btn("Create surface", () => Execute(Cmd.CreateSurface), "Create (or replace) the surface for the active region"),
                        Btn("Create all", () => CreateSurfaces(All()), "Create surfaces for every painted region")));
             g4.Add(Row(Btn("Hide surfaces", () => Execute(Cmd.HideSurfaces), "Hide all surfaces created by MeshFit"),
                        Btn("Show surfaces", () => Execute(Cmd.ShowSurfaces), "Show all surfaces created by MeshFit"),
                        Btn("Export IGES…", ExportIges, "Write all fitted surfaces to an IGES file (mm)")));
-            root.Controls.Add(g4.Box);
+            tOut.Add(g4.Box);
 
-            // 5. Project + advanced
-            var g5 = Group("Project");
-            g5.Add(Row(Btn("Save project…", SaveProject, "Save the painted regions (and the mesh reference) to a .meshfit file"), Btn("Open project…", OpenProject, "Reopen a saved .meshfit project")));
-            _advanced = Check("Show advanced settings", false, v => _advancedPanel.Visible = v, "Show less frequently used options");
-            g5.Add(_advanced);
-            var adv = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Visible = false };
-            _advancedPanel = adv;
-            _activeOnly = Check("Tools only affect the active region", true, v => S.ActiveRegionOnly = v,
-                "Add never steals triangles from other regions; Remove only unselects the active region");
-            adv.Controls.Add(_activeOnly);
-            _featureScale = Num(0, 1000, 0, 2, "Neighbourhood (mm) used to estimate curvature. Larger = less sensitive to scan noise, smaller = resolves tighter fillets. 0 = automatic (4× mesh edge length).");
-            adv.Controls.Add(Row(Lbl("Curvature scale mm"), _featureScale,
-                Btn("Recompute", () => { S.FeatureScale = (double)_featureScale.Value / 1000; _addin.ComputeCurvature(); }, "Recompute curvature with this scale")));
-            _islandLimit = Num(0, 1000000, S.AutoFillIslandLimit, 0, "After each Smart fill, enclosed unpainted islands up to this many triangles are filled automatically (0 = off)");
-            _islandLimit.ValueChanged += (s, e) => S.AutoFillIslandLimit = (int)_islandLimit.Value;
-            adv.Controls.Add(Row(Lbl("Auto-fill islands up to"), _islandLimit, Lbl("tris")));
-            _margin = Num(0, 200, 10, 0, "How far created surfaces extend past the painted region (% of its size)");
-            _rejectOutliers = Check("Reject outliers", true, v => S.FitOptions.RejectOutliers = v, "Ignore stray points when fitting analytic surfaces");
-            adv.Controls.Add(Row(Lbl("Extend %"), _margin, _rejectOutliers));
-            _ctrlU = Num(0, 200, 0, 0, "Freeform control points along u (0 = automatic)");
-            _ctrlV = Num(0, 200, 0, 0, "Freeform control points along v (0 = automatic)");
-            _smoothExp = Num(-14, -2, -10, 0, "Freeform smoothing 10^x. Higher (e.g. -8) = fairer, lower = closer to the scan");
-            adv.Controls.Add(Row(Lbl("Freeform CP u"), _ctrlU, Lbl("v"), _ctrlV));
-            adv.Controls.Add(Row(Lbl("Freeform smoothing 1e"), _smoothExp));
-            _segAngle = Num(1, 90, 20, 0, "Edge angle for automatic segmentation");
-            _segMin = Num(1, 1000000, 200, 0, "Smallest patch kept by automatic segmentation");
-            adv.Controls.Add(Row(Btn("Auto segment", AutoSegment, "Split all unpainted triangles into smooth patches"), Lbl("∠°"), _segAngle, Lbl("min"), _segMin));
-            g5.Add(adv);
-            root.Controls.Add(g5.Box);
+            var ga = Group("Accuracy analyzer (CAD vs scan)");
+            _cadMaxDist = Num(0.01m, 1000, 1.0m, 2, "Scan farther than this (mm) from every body counts as 'not modelled' (grey) and is left out of the statistics");
+            ga.Add(Row(Btn("Analyze bodies", () => Execute(Cmd.AnalyzeCad),
+                           "Compare every visible surface/solid body in the part with the scan; the scan is coloured by deviation (Esc stops the exact refinement)"),
+                       Lbl("ignore > mm"), _cadMaxDist));
+            _showCad = Check("Show CAD deviation", false, v => { S.ShowCadDeviation = v; UpdateLegendVisibility(); S.RaiseChanged(); },
+                "Colour the scan by its distance to the CAD bodies (blue below, red above, magenta out of tolerance, grey not modelled)");
+            ga.Add(Row(_showCad,
+                       Btn("Zebra", () => Execute(Cmd.ToggleZebra), "Toggle SOLIDWORKS zebra stripes to judge surface continuity"),
+                       Btn("Curvature", () => _addin.ToggleSwCurvature(), "Toggle SOLIDWORKS curvature display on the bodies")));
+            _accuracyText = new TextBox { Multiline = true, ReadOnly = true, Width = W - 20, Height = 120, ScrollBars = ScrollBars.Vertical };
+            _tips.SetToolTip(_accuracyText, "Accuracy analyzer report (mm)");
+            ga.Add(_accuracyText);
+            tOut.Add(ga.Box);
 
-            _status = new Label { AutoSize = true, MaximumSize = new Size(W, 0), Text = "Ready." };
-            root.Controls.Add(_status);
+            try { _tabs.SelectedIndex = Math.Max(0, Math.Min(_tabs.TabCount - 1, LastTab)); } catch { }
+            _tabs.SelectedIndexChanged += (s, e) => LastTab = _tabs.SelectedIndex;
+        }
+
+        private static int LastTab = 0;
+
+        /// <summary>Tab page with a vertical, scroll-as-last-resort layout.</summary>
+        private sealed class TabBuilder
+        {
+            public FlowLayoutPanel Panel;
+            public void Add(Control c) => Panel.Controls.Add(c);
+        }
+
+        private TabBuilder Tab(string title, string tip)
+        {
+            var page = new TabPage(title) { AutoScroll = true, ToolTipText = tip, UseVisualStyleBackColor = true };
+            _tabs.ShowToolTips = true;
+            var panel = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink, Location = new Point(0, 0), Padding = new Padding(2)
+            };
+            page.Controls.Add(panel);
+            _tabs.TabPages.Add(page);
+            return new TabBuilder { Panel = panel };
         }
 
         private ContextMenuStrip BuildRegionMenu()
@@ -388,11 +453,11 @@ namespace MeshFit.SolidWorks
 
         private static GroupBuilder Group(string title)
         {
-            var box = new GroupBox { Text = title, Width = W, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(4) };
+            var box = new GroupBox { Text = title, Width = W - 10, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(4) };
             var panel = new FlowLayoutPanel
             {
                 FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true,
-                Dock = DockStyle.Fill, MinimumSize = new Size(W - 12, 0)
+                Dock = DockStyle.Fill, MinimumSize = new Size(W - 22, 0)
             };
             box.Controls.Add(panel);
             return new GroupBuilder { Box = box, Panel = panel };
@@ -510,13 +575,15 @@ namespace MeshFit.SolidWorks
                         ApplyFitSettings();
                         Run(() =>
                         {
-                            var report = _addin.AnalyzeCad((double)_cadMaxDist.Value / 1000);
-                            _analysisText.Text = report;
+                            var report = _addin.AnalyzeCad((double)_cadMaxDist.Value / 1000, Report);
+                            _accuracyText.Text = report;
                             _showCad.Checked = true;
                             UpdateLegendVisibility();
                             return "Accuracy analysis done — hover over the scan to read deviations.";
-                        });
+                        }, title: "Accuracy analyzer");
                         break;
+                    case Cmd.UnloadMesh: UnloadMesh(); break;
+                    case Cmd.PositionMesh: PositionMesh(); break;
                     case Cmd.ToggleZebra: SetStatus(_addin.ToggleZebra() ? "Zebra stripes on." : "Zebra stripes off."); break;
                     case Cmd.ToggleCurvatureMap: _showCurvature.Checked = !_showCurvature.Checked; break;
                     case Cmd.BrushBigger: S.BrushRadius *= 1.25; RefreshAll(); _addin.Redraw(); break;
@@ -553,36 +620,122 @@ namespace MeshFit.SolidWorks
 
         private void Guard(Action a)
         {
-            if (_busy) { SetStatus("Busy, please wait…"); return; }
+            if (_busy) { SetStatus("Busy — press Esc to cancel."); return; }
             try { a(); }
             catch (Exception ex) { SetStatus("Error: " + ex.Message); }
         }
 
+        /// <summary>Token of the running background job (cancelled by Esc / the Cancel button).</summary>
+        private System.Threading.CancellationToken Token => _cts?.Token ?? System.Threading.CancellationToken.None;
+
         /// <summary>Runs work on a worker thread (pure computation only, no SOLIDWORKS calls) or inline.</summary>
-        private void Run(Func<string> work, bool background = false, Action then = null)
+        private void Run(Func<string> work, bool background = false, Action then = null, string title = null)
         {
             if (!background)
             {
                 Cursor = Cursors.WaitCursor;
+                if (title != null) BeginProgress(title);
                 try { SetStatus(work()); }
+                catch (OperationCanceledException) { SetStatus("Cancelled."); }
                 catch (Exception ex) { SetStatus("Error: " + ex.Message); }
-                finally { Cursor = Cursors.Default; }
+                finally { Cursor = Cursors.Default; if (title != null) EndProgress(); }
                 return;
             }
             _busy = true;
             S.Busy = true;
+            _cts = new System.Threading.CancellationTokenSource();
+            var cts = _cts;
+            BeginProgress(title ?? "Working");
             UseWaitCursor = true;
-            SetStatus("Working…");
-            Task.Run(work).ContinueWith(t => BeginInvoke((Action)(() =>
+            SetStatus("Working… (Esc to cancel)");
+            Task.Run(work, cts.Token).ContinueWith(t => BeginInvoke((Action)(() =>
             {
                 _busy = false;
                 S.Busy = false;
+                _cts = null;
+                EndProgress();
                 UseWaitCursor = false;
-                SetStatus(t.IsFaulted ? "Error: " + t.Exception.GetBaseException().Message : t.Result);
+                bool cancelled = t.IsCanceled || cts.IsCancellationRequested ||
+                                 (t.IsFaulted && t.Exception.GetBaseException() is OperationCanceledException);
+                SetStatus(cancelled ? "Cancelled — nothing was changed." :
+                          t.IsFaulted ? "Error: " + t.Exception.GetBaseException().Message : t.Result);
                 ShowResult(S.ActiveRegion);
                 S.RaiseChanged();
-                if (!t.IsFaulted) then?.Invoke();
+                if (!t.IsFaulted && !cancelled) then?.Invoke();
             })));
+        }
+
+        /// <summary>Esc: cancel the running job; otherwise end a stroke; otherwise leave the paint tool.</summary>
+        internal void CancelWork()
+        {
+            if (_cts != null)
+            {
+                _cts.Cancel();
+                SetStatus("Cancelling…");
+            }
+            else if (_addin.Suggestions.Running) { _addin.Suggestions.Cancel(); SetStatus("Background suggestion cancelled."); }
+            else if (_addin.CancelCurvature()) SetStatus("Curvature analysis cancelled.");
+            else if (S.IsStroking) { S.EndStroke(); _addin.Redraw(); }
+            else if (S.Tool != PaintTool.None) SetTool(PaintTool.None);
+        }
+
+        /// <summary>Shows the progress strip for a task.</summary>
+        private void BeginProgress(string title)
+        {
+            _progressStage = title;
+            _progressFraction = null;
+            _progressClock.Restart();
+            _cancel.Visible = true;
+            _progressPanel.Visible = true;
+            UpdateProgressDisplay();
+            _progressPanel.Refresh();
+        }
+
+        private void EndProgress()
+        {
+            _progressClock.Stop();
+            _progressPanel.Visible = false;
+            _cancel.Visible = false;
+        }
+
+        /// <summary>Thread-safe progress report: current step and completed fraction (null = unknown).</summary>
+        internal void Report(string stage, double? fraction)
+        {
+            _progressStage = stage ?? _progressStage;
+            _progressFraction = fraction;
+            if (InvokeRequired) { BeginInvoke((Action)UpdateProgressDisplay); return; }
+            UpdateProgressDisplay();
+            _progressPanel.Refresh(); // paints even while the UI thread is busy with SOLIDWORKS calls
+        }
+
+        private void UpdateProgressDisplay()
+        {
+            if (!_progressPanel.Visible) return;
+            double secs = _progressClock.Elapsed.TotalSeconds;
+            var f = _progressFraction;
+            _progressLabel.Text = f.HasValue ? $"{_progressStage}  —  {f.Value:P0}, {secs:0.0} s" : $"{_progressStage}  —  {secs:0.0} s";
+            if (f.HasValue)
+            {
+                if (_progressBar.Style != ProgressBarStyle.Continuous) _progressBar.Style = ProgressBarStyle.Continuous;
+                _progressBar.Value = Math.Max(0, Math.Min(100, (int)(f.Value * 100)));
+            }
+            else if (_progressBar.Style != ProgressBarStyle.Marquee) _progressBar.Style = ProgressBarStyle.Marquee;
+        }
+
+        private bool _escWasDown;
+
+        private void StartEscWatcher()
+        {
+            var timer = new Timer { Interval = 80 };
+            timer.Tick += (s, e) =>
+            {
+                if (_progressPanel.Visible) UpdateProgressDisplay();
+                bool down = EscKey.IsDown();
+                if (down && !_escWasDown) CancelWork();
+                _escWasDown = down;
+            };
+            timer.Start();
+            Disposed += (s, e) => timer.Dispose();
         }
 
         private void SetStatus(string msg)
@@ -637,8 +790,11 @@ namespace MeshFit.SolidWorks
             {
                 _guide.Text = S.NextStep();
                 var a = S.ActiveRegion;
-                _activeSwatch.BackColor = a == null ? SystemColors.Control : Color.FromArgb(255, Color.FromArgb(a.Color));
-                _activeLabel.Text = a == null ? "(no region)" : $"{a.Name}  ({a.TriangleCount:N0})";
+                _activeCombo.BeginUpdate();
+                _activeCombo.Items.Clear();
+                if (S.Regions != null) foreach (var r in S.Regions.Regions) _activeCombo.Items.Add(r);
+                _activeCombo.SelectedItem = a;
+                _activeCombo.EndUpdate();
                 _undo.Enabled = S.Regions?.CanUndo == true;
                 _redo.Enabled = S.Regions?.CanRedo == true;
                 _tips.SetToolTip(_undo, S.Regions?.UndoLabel != null ? "Undo: " + S.Regions.UndoLabel : "Nothing to undo");
@@ -649,6 +805,7 @@ namespace MeshFit.SolidWorks
                 _removeMode.FlatAppearance.CheckedBackColor = Color.FromArgb(255, 170, 170);
                 _brushDiameter.Value = Clamp((decimal)(S.BrushRadius * 2000), _brushDiameter);
                 _meshInfo.Text = S.HasMesh ? S.MeshDescription : "No mesh loaded.";
+                _showMesh.Checked = S.ShowMesh;
                 foreach (var kv in _typeButtons) kv.Value.Checked = a != null && a.Request == kv.Key;
 
                 _regions.BeginUpdate();
@@ -776,6 +933,35 @@ namespace MeshFit.SolidWorks
             SetStatus($"Auto segmentation created {created.Count} regions (Undo removes them).");
         }
 
+        // ================================================================== mesh
+
+        private void UnloadMesh()
+        {
+            if (!S.HasMesh) { SetStatus("No mesh is loaded."); return; }
+            if (S.Regions.Regions.Any(r => r.TriangleCount > 0))
+            {
+                var a = MessageBox.Show(this, "Save the painted regions as a project before unloading the mesh?",
+                    "MeshFit – unload mesh", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                if (a == DialogResult.Cancel) return;
+                if (a == DialogResult.Yes) { SaveProject(); if (!_lastSaveOk) return; }
+            }
+            _positionDialog?.Close();
+            _addin.UnloadMesh();
+            ShowSuggestion(null, null);
+            SetStatus("Mesh unloaded. SOLIDWORKS bodies and created surfaces are unchanged.");
+        }
+
+        private void PositionMesh()
+        {
+            if (!NeedMesh()) return;
+            if (_positionDialog == null || _positionDialog.IsDisposed)
+            {
+                _positionDialog = new PositionDialog(_addin);
+                _positionDialog.Show(this);
+            }
+            else _positionDialog.Activate();
+        }
+
         // ================================================================== fitting
 
         private void FitRegions(List<Region> regions)
@@ -787,13 +973,16 @@ namespace MeshFit.SolidWorks
             Run(() =>
             {
                 var msgs = new List<string>();
+                int i = 0;
                 foreach (var r in regions)
                 {
+                    Token.ThrowIfCancellationRequested();
+                    Report($"Fitting '{r.Name}' ({++i} of {regions.Count})", (double)(i - 1) / regions.Count);
                     try { var f = S.FitRegion(r); msgs.Add($"{r.Name}: {f.Surface.Kind}, max {f.Stats.MaxAbs * 1000:0.###} mm"); }
                     catch (Exception ex) { msgs.Add($"{r.Name}: {ex.Message}"); }
                 }
                 return string.Join("; ", msgs);
-            }, background: true);
+            }, background: true, title: "Fitting");
         }
 
         private void FitAndGrow()
@@ -801,7 +990,7 @@ namespace MeshFit.SolidWorks
             if (!NeedRegion()) return;
             ApplyFitSettings();
             var r = S.ActiveRegion;
-            Run(() => S.FitAndGrow(r), background: true);
+            Run(() => S.FitAndGrow(r, Token, Report), background: true, title: $"Fit + grow '{r.Name}'");
         }
 
         private void GrowToSurface()
@@ -820,11 +1009,18 @@ namespace MeshFit.SolidWorks
             {
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
                 double scale = Units[_units.SelectedIndex].scale;
+                string file = dlg.FileName;
+                MeshFit.Core.Mesh.TriMesh mesh = null;
                 Run(() =>
                 {
-                    _addin.LoadMeshFile(dlg.FileName, scale);
+                    Report($"Reading {System.IO.Path.GetFileName(file)}", null);
+                    mesh = MeshFit.Core.Mesh.MeshIO.Load(file, scale);
+                    return $"Read {mesh.TriangleCount:N0} triangles.";
+                }, background: true, title: "Loading mesh", then: () =>
+                {
+                    _addin.InstallMesh(mesh, file, scale);
                     SetTool(PaintTool.SmartFill);
-                    return "Mesh loaded. Click or drag on a smooth area to paint the first region.";
+                    SetStatus("Mesh loaded. Click or drag on a smooth area to paint the first region.");
                 });
             }
         }
@@ -847,7 +1043,7 @@ namespace MeshFit.SolidWorks
                 if (answer == DialogResult.Cancel) return;
                 replace = answer == DialogResult.Yes;
             }
-            Run(() => _addin.CreateSurfaces(regions, r => replace));
+            Run(() => _addin.CreateSurfaces(regions, r => replace, Report), title: "Creating surfaces");
             _result.Text = _status.Text;
         }
 
@@ -863,13 +1059,16 @@ namespace MeshFit.SolidWorks
             }
         }
 
+        private bool _lastSaveOk;
+
         private void SaveProject()
         {
+            _lastSaveOk = false;
             if (!NeedMesh()) return;
             using (var dlg = new SaveFileDialog { Filter = "MeshFit project (*.meshfit)|*.meshfit" })
             {
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
-                Run(() => { _addin.SaveProject(dlg.FileName); return "Project saved."; });
+                Run(() => { _addin.SaveProject(dlg.FileName); _lastSaveOk = true; return "Project saved."; });
             }
         }
 
@@ -878,7 +1077,18 @@ namespace MeshFit.SolidWorks
             using (var dlg = new OpenFileDialog { Filter = "MeshFit project (*.meshfit)|*.meshfit" })
             {
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
-                Run(() => { _addin.LoadProject(dlg.FileName); return "Project loaded. Use Fit all to recompute the surfaces."; });
+                string file = dlg.FileName;
+                (MeshFit.Core.Mesh.TriMesh, MeshFit.Core.Selection.RegionSet, MeshFit.Core.Project.ProjectFile.Header) project = default;
+                Run(() =>
+                {
+                    Report("Reading project and mesh", null);
+                    project = SwAddin.ReadProject(file);
+                    return "Project read.";
+                }, background: true, title: "Opening project", then: () =>
+                {
+                    _addin.InstallProject(project);
+                    SetStatus("Project loaded. Use Fit all to recompute the surfaces.");
+                });
             }
         }
 
@@ -914,9 +1124,10 @@ namespace MeshFit.SolidWorks
             List<SelectionCandidate> found = null;
             Run(() =>
             {
-                found = SelectionOptimizer.Explore(S.Mesh, owners, r.Id, opt, default, curvature, blend);
+                found = SelectionOptimizer.Explore(S.Mesh, owners, r.Id, opt, Token, curvature, blend,
+                    new Progress<string>(msg => Report(msg, null)));
                 return $"Optimizer tried {found.Count} selections for '{r.Name}'.";
-            }, background: true, then: () =>
+            }, background: true, title: $"Optimizing selection '{r.Name}'", then: () =>
             {
                 if (found == null || found.Count == 0) return;
                 using (var dlg = new CandidateDialog(found, S.FitOptions.Tolerance))

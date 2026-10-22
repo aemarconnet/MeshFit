@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using MeshFit.Core.Fitting;
+using MeshFit.Core.Geometry;
 using MeshFit.Core.Mesh;
 using MeshFit.Core.Selection;
 
@@ -25,9 +26,11 @@ namespace MeshFit.Core.Project
             /// <summary>Scale applied to the mesh file coordinates on load (e.g. 0.001 for mm → m).</summary>
             public double Scale = 1;
             public int TriangleCount;
+            /// <summary>Placement applied to the (scaled) mesh after loading.</summary>
+            public RigidTransform Transform = RigidTransform.Identity;
         }
 
-        public static void Save(string path, RegionSet set, string meshPath, double scale)
+        public static void Save(string path, RegionSet set, string meshPath, double scale, RigidTransform transform = null)
         {
             var sb = new StringBuilder();
             sb.AppendLine(Magic);
@@ -38,6 +41,7 @@ namespace MeshFit.Core.Project
             sb.AppendLine("mesh " + rel);
             sb.AppendLine("scale " + scale.ToString("R", Inv));
             sb.AppendLine("triangles " + set.Mesh.TriangleCount.ToString(Inv));
+            if (transform != null && !transform.IsIdentity()) sb.AppendLine("transform " + transform);
             foreach (var r in set.Regions)
                 sb.AppendLine(string.Format(Inv, "region {0} {1:X6} {2} {3}", r.Id, r.Color, r.Request, r.Name));
             foreach (var r in set.Regions)
@@ -65,6 +69,7 @@ namespace MeshFit.Core.Project
                 if (line.StartsWith("mesh ")) h.MeshPath = ResolveMesh(path, line.Substring(5).Trim());
                 else if (line.StartsWith("scale ")) h.Scale = double.Parse(line.Substring(6), Inv);
                 else if (line.StartsWith("triangles ")) h.TriangleCount = int.Parse(line.Substring(10), Inv);
+                else if (line.StartsWith("transform ")) h.Transform = RigidTransform.Parse(line.Substring(10));
             }
             return h;
         }

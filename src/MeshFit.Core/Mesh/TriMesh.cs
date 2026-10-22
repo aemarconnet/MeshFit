@@ -115,6 +115,14 @@ namespace MeshFit.Core.Mesh
             return r;
         }
 
+        /// <summary>Returns a copy moved by a rigid transform (same triangle indices).</summary>
+        public TriMesh Transformed(RigidTransform x)
+        {
+            var v = new Vec3[Vertices.Length];
+            for (int i = 0; i < v.Length; i++) v[i] = x.Apply(Vertices[i]);
+            return new TriMesh(v, (int[])Indices.Clone());
+        }
+
         /// <summary>Returns a copy scaled uniformly (e.g. mm → m).</summary>
         public TriMesh Scaled(double s)
         {

@@ -57,6 +57,43 @@ namespace MeshFit.Core.Geometry
             }
         }
 
+        /// <summary>Eigen-decomposition of a symmetric n×n matrix (cyclic Jacobi). Ascending eigenvalues; vectors[i] is eigenvector i.</summary>
+        public static void SymmetricEigen(double[,] a, out double[] values, out double[][] vectors)
+        {
+            int n = a.GetLength(0);
+            var m = (double[,])a.Clone();
+            var v = new double[n, n];
+            for (int i = 0; i < n; i++) v[i, i] = 1;
+            for (int sweep = 0; sweep < 100; sweep++)
+            {
+                double off = 0;
+                for (int p = 0; p < n; p++) for (int q = p + 1; q < n; q++) off += Math.Abs(m[p, q]);
+                if (off < 1e-300) break;
+                for (int p = 0; p < n - 1; p++)
+                for (int q = p + 1; q < n; q++)
+                {
+                    if (Math.Abs(m[p, q]) < 1e-300) continue;
+                    double theta = (m[q, q] - m[p, p]) / (2 * m[p, q]);
+                    double t = theta == 0 ? 1 : Math.Sign(theta) / (Math.Abs(theta) + Math.Sqrt(theta * theta + 1));
+                    double c = 1 / Math.Sqrt(t * t + 1), s = t * c;
+                    for (int k = 0; k < n; k++) { double x = m[k, p], y = m[k, q]; m[k, p] = c * x - s * y; m[k, q] = s * x + c * y; }
+                    for (int k = 0; k < n; k++) { double x = m[p, k], y = m[q, k]; m[p, k] = c * x - s * y; m[q, k] = s * x + c * y; }
+                    for (int k = 0; k < n; k++) { double x = v[k, p], y = v[k, q]; v[k, p] = c * x - s * y; v[k, q] = s * x + c * y; }
+                }
+            }
+            var idx = new int[n];
+            for (int i = 0; i < n; i++) idx[i] = i;
+            Array.Sort(idx, (i, j) => m[i, i].CompareTo(m[j, j]));
+            values = new double[n];
+            vectors = new double[n][];
+            for (int i = 0; i < n; i++)
+            {
+                values[i] = m[idx[i], idx[i]];
+                vectors[i] = new double[n];
+                for (int k = 0; k < n; k++) vectors[i][k] = v[k, idx[i]];
+            }
+        }
+
         /// <summary>
         /// In-place Cholesky factorisation of a symmetric positive definite matrix (lower triangle used).
         /// Returns false if the matrix is not positive definite.

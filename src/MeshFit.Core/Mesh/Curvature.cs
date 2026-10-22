@@ -24,13 +24,15 @@ namespace MeshFit.Core.Mesh
 
         public static double DefaultScale(TriMesh m) => 4 * m.AverageEdgeLength;
 
-        public static Curvature Compute(TriMesh m, double scale, CancellationToken ct = default)
+        /// <param name="progress">Receives the completed fraction (0..1).</param>
+        public static Curvature Compute(TriMesh m, double scale, CancellationToken ct = default, IProgress<double> progress = null)
         {
             int nv = m.VertexCount;
             var adj = VertexAdjacency(m);
             var vmax = new float[nv];
             var vmin = new float[nv];
             double r2 = scale * scale;
+            int done = 0, step = Math.Max(1, nv / 50);
             Parallel.For(0, nv, new ParallelOptions { CancellationToken = ct }, () => (new List<int>(), new HashSet<int>()), (v, state, buf) =>
             {
                 var (list, seen) = buf;
@@ -40,6 +42,8 @@ namespace MeshFit.Core.Mesh
                 for (int i = 0; i < list.Count && list.Count < 400; i++)
                     foreach (int w in adj[list[i]])
                         if (seen.Add(w) && m.Vertices[w].DistanceSquaredTo(p0) <= r2) list.Add(w);
+                int d = Interlocked.Increment(ref done);
+                if (progress != null && d % step == 0) progress.Report((double)d / nv);
                 if (list.Count < 7) return buf;
                 var f = Frame.FromAxis(p0, m.VertexNormals[v]);
                 var ata = new double[6, 6];

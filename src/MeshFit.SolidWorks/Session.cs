@@ -92,6 +92,69 @@ namespace MeshFit.SolidWorks
         public event Action<string> Status;
 
         public bool HasMesh => Mesh != null;
+
+        // ---- placement of the mesh relative to the part origin
+        /// <summary>Cumulative rigid placement applied to the mesh since it was loaded (saved in projects).</summary>
+        public RigidTransform MeshTransform { get; private set; } = RigidTransform.Identity;
+        private readonly Stack<RigidTransform> _placementHistory = new Stack<RigidTransform>();
+        public bool CanUndoPlacement => _placementHistory.Count > 0;
+
+        /// <summary>
+        /// Moves the mesh (and everything fitted on it) by a rigid transform. Regions keep their triangles,
+        /// fitted surfaces move along, so nothing has to be refitted.
+        /// </summary>
+        public void ApplyPlacement(RigidTransform x, bool record = true)
+        {
+            if (Mesh == null || x.IsIdentity()) return;
+            var moved = Mesh.Transformed(x);
+            Mesh = moved;
+            Regions.ReplaceMesh(moved);
+            foreach (var r in Regions.Regions) if (r.Fit?.Surface != null) r.Fit.Surface = r.Fit.Surface.Transformed(x);
+            foreach (var r in Regions.Regions) if (r.Fit?.Alternatives != null)
+                foreach (var a in r.Fit.Alternatives) if (a != r.Fit && a.Surface != null) a.Surface = a.Surface.Transformed(x);
+            if (LastPaintPoint.HasValue) LastPaintPoint = x.Apply(LastPaintPoint.Value);
+            CadResult = null;        // distances to the CAD changed
+            LastFillet = null;
+            MeshTransform = x.After(MeshTransform);
+            if (record) _placementHistory.Push(x);
+            // A mesh taken from a SOLIDWORKS body only moves in MeshFit: show the overlay so it stays visible.
+            ShowMesh = true;
+            RaiseChanged();
+        }
+
+        public void UndoPlacement()
+        {
+            if (_placementHistory.Count == 0) return;
+            ApplyPlacement(_placementHistory.Pop().Inverse(), record: false);
+        }
+
+        public void ResetPlacement()
+        {
+            if (MeshTransform.IsIdentity()) return;
+            ApplyPlacement(MeshTransform.Inverse(), record: false);
+            _placementHistory.Clear();
+        }
+
+        /// <summary>Forgets the mesh, its regions and all analysis results.</summary>
+        public void Unload()
+        {
+            Mesh = null;
+            Regions = null;
+            ActiveRegion = null;
+            Curvature = null;
+            CadResult = null;
+            ShowCadDeviation = false;
+            LastFillet = null;
+            LastFilletRegion = null;
+            LastPaintPoint = null;
+            MeshPath = null;
+            MeshDescription = null;
+            MeshTransform = RigidTransform.Identity;
+            _placementHistory.Clear();
+            Tool = PaintTool.None;
+            HasHover = false;
+            RaiseChanged();
+        }
         public bool IsStroking => _stroking;
         /// <summary>Effective remove state for the cursor/brush display.</summary>
         public bool Removing => _stroking ? _strokeRemove : RemoveMode;
@@ -103,6 +166,8 @@ namespace MeshFit.SolidWorks
             CadResult = null;
             ShowCadDeviation = false;
             LastFillet = null;
+            MeshTransform = RigidTransform.Identity;
+            _placementHistory.Clear();
             Regions = regions ?? new RegionSet(mesh);
             Regions.Changed += (s, e) => RaiseChanged();
             ActiveRegion = Regions.Regions.FirstOrDefault() ?? Regions.AddRegion();
@@ -385,21 +450,36 @@ namespace MeshFit.SolidWorks
         /// Fit, grow to everything within tolerance of the fit, refit — repeated until the region stops
         /// growing. Stops at adjacent fillets when enabled. One undo step.
         /// </summary>
-        public string FitAndGrow(Region r)
+        public string FitAndGrow(Region r, System.Threading.CancellationToken ct = default, Action<string, double?> progress = null)
         {
             int start = Regions.TriangleListOf(r.Id).Count;
             if (start < 3) throw new InvalidOperationException($"'{r.Name}' has no painted triangles.");
+            var oldFit = r.Fit;
             Regions.BeginStroke("Fit + grow");
             try
             {
                 for (int pass = 0; pass < 8; pass++)
                 {
+                    ct.ThrowIfCancellationRequested();
+                    progress?.Invoke($"Fit + grow '{r.Name}': fitting (pass {pass + 1})", (pass + 0.0) / 8);
                     FitRegion(r);
+                    ct.ThrowIfCancellationRequested();
+                    progress?.Invoke($"Fit + grow '{r.Name}': growing over the {r.Fit.Surface.Kind.ToString().ToLowerInvariant()} (pass {pass + 1})", (pass + 0.5) / 8);
                     int added = Grow(r);
                     Regions.UpdateCounts();
                     if (added <= Math.Max(3, r.TriangleCount / 200)) break;
                 }
+                ct.ThrowIfCancellationRequested();
+                progress?.Invoke($"Fit + grow '{r.Name}': final fit", 0.95);
                 FitRegion(r);
+            }
+            catch (OperationCanceledException)
+            {
+                // Abort = leave everything as it was.
+                Regions.EndStroke();
+                Regions.Undo();
+                r.Fit = oldFit;
+                throw;
             }
             finally { Regions.EndStroke(); }
             int end = Regions.TriangleListOf(r.Id).Count;

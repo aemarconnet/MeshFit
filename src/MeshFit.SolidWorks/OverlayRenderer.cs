@@ -21,6 +21,7 @@ namespace MeshFit.SolidWorks
         private float[] _paintV = new float[0]; private byte[] _paintC = new byte[0];
         private float[] _lineV = new float[0]; private byte[] _lineC = new byte[0];
         private object _meshBuiltFor;
+        private object _previewMesh;
         // Preview lines per region, valid while the fit and the triangle count are unchanged.
         private readonly Dictionary<int, (FitResult fit, int tris, List<float> v, List<byte> c)> _previewCache =
             new Dictionary<int, (FitResult, int, List<float>, List<byte>)>();
@@ -145,6 +146,7 @@ namespace MeshFit.SolidWorks
         {
             var m = _s.Mesh;
             var set = _s.Regions;
+            if (!ReferenceEquals(_previewMesh, m)) { _previewCache.Clear(); _previewMesh = m; }
             int nt = m.TriangleCount;
 
             // Whole mesh in neutral grey, shaded by a fixed head light on the normal so it reads as 3D.

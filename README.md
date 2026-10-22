@@ -106,6 +106,46 @@ your own installation instead, run:
 dotnet build src/MeshFit.SolidWorks -c Release -p:SolidWorksInteropDir="C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist"
 ```
 
+## Task pane layout
+
+- **Header**, visible on every tab:
+  - The next-step guide.
+  - **Undo / Redo**.
+  - The **active region** dropdown.
+  - The paint tools.
+  - **+ Add / − Remove**.
+  - Brush **Ø** and smart-fill angle.
+  - The deviation legend.
+  - A **progress strip** while anything runs: task, current step, % bar and elapsed seconds, with
+    **Cancel (Esc)**. Long operations that block SOLIDWORKS also show progress in its status bar.
+- **Tabs:**
+  - **Mesh:** load, use bodies, **Unload mesh**, **Position mesh…**, project and settings.
+  - **Regions:** region list and selection tools.
+  - **Fit:** surface type, tolerance, Fit + grow, report and suggestions.
+  - **Fillets:** fillet detection, measurement and 3D sketch curves.
+  - **Output:** SOLIDWORKS surfaces, hide/show, accuracy analyzer, IGES.
+- **Esc** cancels the running job: Fit + grow, Fit all, Optimize, curvature analysis, the accuracy
+  analyzer's exact pass, or surface creation. A cancelled Fit + grow leaves the region unchanged.
+  If nothing is running, Esc leaves the paint tool.
+
+### Positioning the mesh (Mesh tab → Position mesh…)
+
+- **Numeric:** move X/Y/Z in mm and rotate about X/Y/Z in degrees, around the part origin or the
+  mesh centroid.
+- **Mates:** pair mesh features with part references, with *Flip* to reverse direction. Mate 1 has
+  priority, then 2, then 3, like a 3-2-1 alignment. *Sel.* uses whatever is selected in SOLIDWORKS
+  as the target.
+  - Mesh features: fitted planes, cylinder/cone/torus axes, sphere centres, cone apexes, the mesh
+    centroid and the detected symmetry plane.
+  - Part references: Front, Top or Right plane, the X/Y/Z axes, the origin, or a selected plane,
+    face, axis, edge or vertex.
+- **Auto:** centroid or bounding box to the origin, principal axes to X/Y/Z (length, width,
+  height), or **symmetry plane detection** onto the Right plane for full vehicle scans.
+- Fitted surfaces move with the mesh, so nothing has to be refitted. *Undo last move* and *Reset to
+  original* are available. The placement is saved in the project file.
+- A mesh taken from a SOLIDWORKS body moves only inside MeshFit. The overlay is switched on so you
+  can see where it is.
+
 ## Workflow for body panels
 
 1. **Bring in the scan**. Use either of these:

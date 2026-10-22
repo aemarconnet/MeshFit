@@ -35,20 +35,23 @@ namespace MeshFit.SolidWorks
             ("\"Remove (unselect)@\"", Cmd.ModeRemove, "Tools remove triangles from the region", true),
             ("Undo", Cmd.Undo, "Undo the last MeshFit paint step", true),
             ("\"Redo@\"", Cmd.Redo, "Redo", false),
-            ("New region", Cmd.NewRegion, "Start painting the next surface", true),
-            ("Fill islands", Cmd.FillIslands, "Fill unpainted islands enclosed by the active region", true),
+            ("New region", Cmd.NewRegion, "Start painting the next surface", false),
+            ("Fill islands", Cmd.FillIslands, "Fill unpainted islands enclosed by the active region", false),
             ("Grow ring", Cmd.GrowRing, "Add one ring of triangles around the active region", false),
             ("Shrink ring", Cmd.ShrinkRing, "Remove the outer ring of triangles", false),
-            ("Clean up paint", Cmd.CleanUp, "Remove stray specks, fill holes and smooth the jagged brush edge", true),
+            ("Clean up paint", Cmd.CleanUp, "Remove stray specks, fill holes and smooth the jagged brush edge", false),
             ("\"Clear region@\"", Cmd.ClearRegion, "Unselect every triangle of the active region", false),
             ("Brush bigger", Cmd.BrushBigger, "Increase the brush diameter (or Ctrl/Shift + wheel up)", false),
             ("\"Brush smaller@\"", Cmd.BrushSmaller, "Decrease the brush diameter (or Ctrl/Shift + wheel down)", false),
-            ("Grow to fillets", Cmd.GrowToFillets, "Grow the region up to the adjacent fillets / feature lines", true),
-            ("\"Trim fillets@\"", Cmd.TrimFillets, "Remove the part of the region that runs into adjacent fillets", true),
+            ("Grow to fillets", Cmd.GrowToFillets, "Grow the region up to the adjacent fillets / feature lines", false),
+            ("\"Trim fillets@\"", Cmd.TrimFillets, "Remove the part of the region that runs into adjacent fillets", false),
             ("Analyze fillet", Cmd.AnalyzeFillet, "Measure the radius along the selected fillet band (constant or variable)", false),
             ("\"Boundary to 3D sketch@\"", Cmd.BoundaryToSketch, "Create a 3D sketch of the active region's boundary curves", false),
-            ("Optimize selection", Cmd.Optimize, "Try growing/shrinking/trimming the selection for the best fit", true),
+            ("Optimize selection", Cmd.Optimize, "Try growing/shrinking/trimming the selection for the best fit", false),
             ("Fit + grow", Cmd.FitAndGrow, "Fit the active region and grow it over its surface", true),
+            ("Create extruded surface (sketch)", Cmd.CreateExtrude, "Sketch the region's profile with lines and arcs and extrude it as a surface", true),
+            ("Create revolved surface (sketch)", Cmd.CreateRevolve, "Sketch the region's profile with lines and arcs and revolve it as a surface", true),
+            ("Next feature", Cmd.NextFeature, "Finish this region and start painting the next feature", true),
             ("\"Create surface@\"", Cmd.CreateSurface, "Create the SOLIDWORKS surface for the active region", false),
             ("Accuracy analyzer", Cmd.AnalyzeCad, "Colour the scan by its distance to the bodies in the part", false),
             ("Position mesh…", Cmd.PositionMesh, "Open the wizard that places the mesh relative to the part origin", false),
@@ -126,6 +129,8 @@ namespace MeshFit.SolidWorks
                 case Cmd.Undo: return Session.Regions.CanUndo ? 1 : 0;
                 case Cmd.Redo: return Session.Regions.CanRedo ? 1 : 0;
                 case Cmd.CreateSurface:
+                case Cmd.CreateExtrude:
+                case Cmd.CreateRevolve:
                 case Cmd.FitAndGrow:
                 case Cmd.FillIslands:
                 case Cmd.GrowRing:
@@ -183,6 +188,19 @@ namespace MeshFit.SolidWorks
                             g.FillRectangle(fill, 2, 2, 16, 16);
                             g.FillEllipse(Brushes.White, 7, 7, 6, 6);
                             g.DrawEllipse(red, 7, 7, 6, 6);
+                            break;
+                        case Cmd.CreateExtrude: // profile + arrow
+                            g.DrawArc(pen, 2, 8, 10, 10, 180, 90);
+                            g.DrawLine(pen, 7, 8, 16, 8); g.DrawLine(pen, 10, 14, 18, 4); g.DrawLine(pen, 18, 4, 14, 5); g.DrawLine(pen, 18, 4, 17, 8);
+                            break;
+                        case Cmd.CreateRevolve: // circular arrow around an axis
+                            g.DrawLine(red, 10, 1, 10, 19);
+                            g.DrawEllipse(pen, 3, 6, 14, 8);
+                            g.FillPolygon(fill, new[] { new PointF(15, 12), new PointF(19, 13), new PointF(16, 16) });
+                            break;
+                        case Cmd.NextFeature: // play / next
+                            g.FillPolygon(fill, new[] { new PointF(5, 4), new PointF(15, 10), new PointF(5, 16) });
+                            g.DrawLine(pen, 17, 4, 17, 16);
                             break;
                         case Cmd.CleanUp: // broom
                             g.DrawLine(pen, 15, 2, 9, 11);
@@ -244,6 +262,9 @@ namespace MeshFit.SolidWorks
         public void OnMenuBrushSmaller() => Menu(Cmd.BrushSmaller);
         public void OnMenuFitAndGrow() => Menu(Cmd.FitAndGrow);
         public void OnMenuCreateSurface() => Menu(Cmd.CreateSurface);
+        public void OnMenuCreateExtrude() => Menu(Cmd.CreateExtrude);
+        public void OnMenuCreateRevolve() => Menu(Cmd.CreateRevolve);
+        public void OnMenuNextFeature() => Menu(Cmd.NextFeature);
         public void OnMenuHideSurfaces() => Menu(Cmd.HideSurfaces);
         public void OnMenuShowSurfaces() => Menu(Cmd.ShowSurfaces);
 
@@ -275,6 +296,9 @@ namespace MeshFit.SolidWorks
         public int OnMenuEnableBrushSmaller() => Enable(Cmd.BrushSmaller);
         public int OnMenuEnableFitAndGrow() => Enable(Cmd.FitAndGrow);
         public int OnMenuEnableCreateSurface() => Enable(Cmd.CreateSurface);
+        public int OnMenuEnableCreateExtrude() => Enable(Cmd.CreateExtrude);
+        public int OnMenuEnableCreateRevolve() => Enable(Cmd.CreateRevolve);
+        public int OnMenuEnableNextFeature() => Enable(Cmd.NextFeature);
         public int OnMenuEnableHideSurfaces() => Enable(Cmd.HideSurfaces);
         public int OnMenuEnableShowSurfaces() => Enable(Cmd.ShowSurfaces);
     }

@@ -106,6 +106,45 @@ your own installation instead, run:
 dotnet build src/MeshFit.SolidWorks -c Release -p:SolidWorksInteropDir="C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist"
 ```
 
+## The feature loop
+
+The header has a step bar that walks through each feature to reverse engineer. The current step is
+highlighted.
+
+1. **① Paint.** Selects Smart fill. Click or drag on the feature.
+2. **② Fit + grow.** Fits the region and grows it over its surface.
+3. **③ Create**, one of:
+   - **Surface:** a true plane, cylinder, cone, sphere or torus, or a B-spline.
+   - **Extrude:** an editable sketch of lines and arcs plus an extruded surface.
+   - **Revolve:** an editable sketch of lines and arcs plus a revolved surface.
+4. **④ Next ▶.** Hides the finished surface, starts a new region and goes back to painting.
+
+With *After Create: hide the surface and start the next feature* (Mesh tab → Settings, on by
+default), step 4 runs automatically after each Create. The same steps are on the right-click
+context toolbar.
+
+### Sketch-based surfaces (Extrude / Revolve)
+
+For regions that are extrusions or revolutions, e.g. a flange with a rolled hem, a feature line, or
+a wheel-arch lip:
+
+- **Extrude:** the direction is found from the surface normals, which are all perpendicular to an
+  extrusion direction.
+- **Revolve:** the axis comes from the fit, or from the normal lines, which all meet the axis
+  (Pottmann's line-complex method, then refined).
+- The region is collapsed onto a sketch plane, and its centre line is traced and broken into the
+  **fewest lines and arcs within tolerance**. Each line and arc is then refitted to the scan points,
+  with tangent joints made exactly tangent.
+- MeshFit creates a reference plane, a 2D sketch made only of lines and arcs (plus a centreline for
+  revolves), and a SOLIDWORKS **Extruded Surface** or **Revolved Surface**. Everything stays
+  editable in the feature tree.
+- Directions and axes within 1° of X/Y/Z snap onto the axis. Align the mesh first with
+  *Position mesh…* to get clean sketch planes.
+- The created feature is checked against the scan. If SOLIDWORKS extruded or revolved the wrong
+  way, it is rebuilt in the other direction.
+- You are warned when the region isn't really an extrusion or revolution: the normals vary, or the
+  profile deviates by more than three times the tolerance.
+
 ## Task pane layout
 
 - **Header**, visible on every tab:

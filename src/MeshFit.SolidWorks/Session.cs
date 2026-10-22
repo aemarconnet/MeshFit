@@ -533,17 +533,17 @@ namespace MeshFit.SolidWorks
         /// <summary>Suggested next step for the guidance banner.</summary>
         public string NextStep()
         {
-            if (!HasMesh) return "Step 1 · Load a mesh file, or select a mesh body in the part and click 'Use bodies in part'.";
+            if (!HasMesh) return "Load a mesh (Mesh tab), or select a mesh body in the part and click 'Use bodies in part'.";
             var r = ActiveRegion;
             if (r == null || r.TriangleCount == 0)
                 return Tool == PaintTool.None
-                    ? "Step 2 · Pick 'Smart fill' above, then click or drag on a smooth area of the panel."
-                    : $"Step 2 · Click or drag to paint '{r?.Name}'. Ctrl+click = straight line, Ctrl/Shift+wheel = brush size, Shift = remove. A few dots on a cylinder are enough: MeshFit suggests the whole face.";
+                    ? "① Click 'Paint', then click or drag on the feature you want to reverse engineer."
+                    : $"① Paint '{r?.Name}': click/drag. Ctrl+click = straight line, Ctrl/Shift+wheel = size, Shift = remove, Esc = stop.";
             if (r.Fit == null)
-                return $"Step 3 · Click 'Fit + grow': it fits '{r.Name}' and extends it to every triangle on that surface.";
+                return $"② Click 'Fit + grow': it fits '{r.Name}' and extends it to every triangle on that surface. (Extrude/Revolve also work straight from the paint.)";
             if (r.FeatureName == null)
-                return $"Step 4 · Check the deviation (max {r.Fit.Stats.MaxAbs * 1000:0.###} mm), then 'Create surface'. Or fix the paint and fit again.";
-            return $"'{r.Name}' is done. Click 'New region' for the next surface.";
+                return $"③ Max deviation {r.Fit.Stats.MaxAbs * 1000:0.###} mm. Create: Surface ({r.Fit.Surface.Kind}), Extrude or Revolve (sketch of lines + arcs).";
+            return $"④ '{r.Name}' is done. Click 'Next ▶' (or right-click → Next feature) for the next feature.";
         }
     }
 }

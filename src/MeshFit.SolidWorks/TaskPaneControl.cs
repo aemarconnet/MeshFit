@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using MeshFit.Core.Analysis;
 using MeshFit.Core.Fitting;
 using MeshFit.Core.Selection;
 using Region = MeshFit.Core.Selection.Region;
@@ -35,6 +36,9 @@ namespace MeshFit.SolidWorks
         private string _progressStage;
         private double? _progressFraction;
         private PositionDialog _positionDialog;
+        private Button _stepPaint, _stepFit, _stepSurface, _stepExtrude, _stepRevolve, _stepNext;
+        private CheckBox _autoNext;
+        private NumericUpDown _snapDeg;
         private TextBox _accuracyText;
         private System.Threading.CancellationTokenSource _cts;
         private Button _undo, _redo;
@@ -122,6 +126,16 @@ namespace MeshFit.SolidWorks
                 BackColor = Color.FromArgb(255, 248, 205), BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 0, 0, 3)
             };
             header.Controls.Add(_guide);
+
+            // Feature loop: paint → fit → create → next. The current step is highlighted.
+            _stepPaint = Btn("① Paint", () => Execute(Cmd.StepPaint), "Step 1: paint the next feature (selects Smart fill if no tool is active)");
+            _stepFit = Btn("② Fit + grow", () => Execute(Cmd.FitAndGrow), "Step 2: fit the region and grow it over its surface (Esc cancels)");
+            _stepNext = Btn("④ Next ▶", () => Execute(Cmd.NextFeature), "Step 4: finish this region (hide its surface) and start the next feature");
+            header.Controls.Add(Row(_stepPaint, _stepFit, _stepNext));
+            _stepSurface = Btn("Surface", () => Execute(Cmd.CreateSurface), "Create the fitted surface (true plane/cylinder/cone/sphere/torus, or B-spline)");
+            _stepExtrude = Btn("Extrude", () => Execute(Cmd.CreateExtrude), "Create an editable sketch (lines + arcs) on a plane and an extruded surface from it");
+            _stepRevolve = Btn("Revolve", () => Execute(Cmd.CreateRevolve), "Create an editable sketch (lines + arcs) through the axis and a revolved surface from it");
+            header.Controls.Add(Row(Lbl("③ Create:"), _stepSurface, _stepExtrude, _stepRevolve));
 
             _undo = Btn("↶ Undo", () => Execute(Cmd.Undo), "Undo the last paint step (also region delete/merge)");
             _redo = Btn("↷ Redo", () => Execute(Cmd.Redo), "Redo");
@@ -225,6 +239,11 @@ namespace MeshFit.SolidWorks
             _activeOnly = Check("Tools only affect the active region", true, v => S.ActiveRegionOnly = v,
                 "Add never steals triangles from other regions; Remove only unselects the active region");
             gs.Add(_activeOnly);
+            _autoNext = Check("After Create: hide the surface and start the next feature", true, v => { },
+                "Completes the paint → fit → create loop automatically: the created surface is hidden and a new region is started with Smart fill");
+            gs.Add(_autoNext);
+            _snapDeg = Num(0, 10, 1, 1, "Extrusion directions and revolve axes within this angle (degrees) of X/Y/Z are snapped exactly onto the axis (0 = never)");
+            gs.Add(Row(Lbl("Snap sketch directions to X/Y/Z within °"), _snapDeg));
             _islandLimit = Num(0, 1000000, S.AutoFillIslandLimit, 0, "After each Smart fill, enclosed unpainted islands up to this many triangles are filled automatically (0 = off)");
             _islandLimit.ValueChanged += (s, e) => S.AutoFillIslandLimit = (int)_islandLimit.Value;
             gs.Add(Row(Lbl("Auto-fill islands up to"), _islandLimit, Lbl("tris")));
@@ -373,6 +392,8 @@ namespace MeshFit.SolidWorks
             var g4 = Group("SOLIDWORKS surfaces");
             g4.Add(Row(Btn("Create surface", () => Execute(Cmd.CreateSurface), "Create (or replace) the surface for the active region"),
                        Btn("Create all", () => CreateSurfaces(All()), "Create surfaces for every painted region")));
+            g4.Add(Row(Btn("Extruded surface (sketch)", () => Execute(Cmd.CreateExtrude), "Sketch the active region's profile with lines and arcs and extrude it"),
+                       Btn("Revolved surface (sketch)", () => Execute(Cmd.CreateRevolve), "Sketch the active region's profile with lines and arcs and revolve it")));
             g4.Add(Row(Btn("Hide surfaces", () => Execute(Cmd.HideSurfaces), "Hide all surfaces created by MeshFit"),
                        Btn("Show surfaces", () => Execute(Cmd.ShowSurfaces), "Show all surfaces created by MeshFit"),
                        Btn("Export IGES…", ExportIges, "Write all fitted surfaces to an IGES file (mm)")));
@@ -583,6 +604,15 @@ namespace MeshFit.SolidWorks
                         }, title: "Accuracy analyzer");
                         break;
                     case Cmd.UnloadMesh: UnloadMesh(); break;
+                    case Cmd.StepPaint:
+                        if (!NeedMesh()) return;
+                        S.EnsureRegion();
+                        if (S.Tool == PaintTool.None || S.Tool == PaintTool.PickRegion) SetTool(PaintTool.SmartFill);
+                        SetStatus($"Paint '{S.ActiveRegion.Name}' in the graphics area.");
+                        break;
+                    case Cmd.NextFeature: NextFeature(); break;
+                    case Cmd.CreateExtrude: CreateSketched(revolve: false); break;
+                    case Cmd.CreateRevolve: CreateSketched(revolve: true); break;
                     case Cmd.PositionMesh: PositionMesh(); break;
                     case Cmd.ToggleZebra: SetStatus(_addin.ToggleZebra() ? "Zebra stripes on." : "Zebra stripes off."); break;
                     case Cmd.ToggleCurvatureMap: _showCurvature.Checked = !_showCurvature.Checked; break;
@@ -807,6 +837,13 @@ namespace MeshFit.SolidWorks
                 _meshInfo.Text = S.HasMesh ? S.MeshDescription : "No mesh loaded.";
                 _showMesh.Checked = S.ShowMesh;
                 foreach (var kv in _typeButtons) kv.Value.Checked = a != null && a.Request == kv.Key;
+                int step = !S.HasMesh || a == null || a.TriangleCount == 0 ? 1 : a.Fit == null ? 2 : a.FeatureName == null ? 3 : 4;
+                var hi = Color.FromArgb(255, 220, 120);
+                _stepPaint.BackColor = step == 1 ? hi : SystemColors.Control;
+                _stepFit.BackColor = step == 2 ? hi : SystemColors.Control;
+                _stepSurface.BackColor = _stepExtrude.BackColor = _stepRevolve.BackColor = step == 3 ? hi : SystemColors.Control;
+                _stepNext.BackColor = step == 4 ? hi : SystemColors.Control;
+                foreach (var b in new[] { _stepPaint, _stepFit, _stepSurface, _stepExtrude, _stepRevolve, _stepNext }) b.UseVisualStyleBackColor = b.BackColor == SystemColors.Control;
 
                 _regions.BeginUpdate();
                 _regions.Items.Clear();
@@ -933,6 +970,67 @@ namespace MeshFit.SolidWorks
             SetStatus($"Auto segmentation created {created.Count} regions (Undo removes them).");
         }
 
+        // ================================================================== feature loop
+
+        /// <summary>Hide the finished surface, start a new region and go back to painting.</summary>
+        private void NextFeature()
+        {
+            if (!NeedMesh()) return;
+            var done = S.ActiveRegion;
+            if (done != null && done.FeatureName != null && !done.SurfaceHidden)
+                _addin.SetSurfacesHidden(new[] { done }, true);
+            var r = S.NewRegion();
+            SetTool(PaintTool.SmartFill);
+            ShowSuggestion(null, null);
+            SetStatus(done != null && done.TriangleCount > 0
+                ? $"'{done.Name}' finished. Painting '{r.Name}' — click or drag on the next feature."
+                : $"Painting '{r.Name}'.");
+        }
+
+        private void AfterCreate()
+        {
+            if (_autoNext.Checked) NextFeature();
+        }
+
+        /// <summary>Analyse the region as an extrusion / revolution (worker thread), then build sketch + feature.</summary>
+        private void CreateSketched(bool revolve)
+        {
+            if (!NeedRegion()) return;
+            ApplyFitSettings();
+            var r = S.ActiveRegion;
+            var tris = S.Regions.TriangleListOf(r.Id);
+            double tol = S.FitOptions.Tolerance, snap = (double)_snapDeg.Value;
+            var hint = r.Fit?.Surface;
+            SketchProfile prof = null;
+            Run(() =>
+            {
+                Report(revolve ? "Finding the axis and the profile" : "Finding the extrusion direction and the profile", null);
+                prof = revolve
+                    ? (SketchProfile)SketchProfiles.Revolution(S.Mesh, tris, tol, hint, 2, snap)
+                    : SketchProfiles.Extrusion(S.Mesh, tris, tol, S.ExtentMargin, snap);
+                return "Profile: " + prof.Describe(1000, "mm");
+            }, background: true, title: revolve ? $"Revolve '{r.Name}'" : $"Extrude '{r.Name}'", then: () =>
+            {
+                string warn = null;
+                if (prof is ExtrusionProfile ep && ep.DirectionResidual > Math.Sin(3 * Math.PI / 180))
+                    warn = $"The surface normals vary {Math.Asin(Math.Min(1, ep.DirectionResidual)) * 180 / Math.PI:0.#}° from a single extrusion direction.";
+                if (prof is RevolutionProfile rp && rp.AxisResidual > 5 * tol)
+                    warn = $"The normals miss a common axis by {rp.AxisResidual * 1000:0.###} mm on average.";
+                if (prof.MaxDeviation > 3 * tol)
+                    warn = (warn == null ? "" : warn + "\n") + $"The lines-and-arcs profile deviates up to {prof.MaxDeviation * 1000:0.###} mm from the scan.";
+                if (warn != null && MessageBox.Show(this, warn + "\n\nThe region may not be a simple " + (revolve ? "revolution" : "extrusion") + ". Create it anyway?",
+                        "MeshFit", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+                Run(() =>
+                {
+                    string msg = revolve ? _addin.CreateRevolvedSurface(r, (RevolutionProfile)prof, Report)
+                                         : _addin.CreateExtrudedSurface(r, (ExtrusionProfile)prof, Report);
+                    _result.Text = msg + Environment.NewLine + "Profile: " + prof.Describe(1000, "mm");
+                    AfterCreate();
+                    return msg;
+                }, title: revolve ? "Creating revolved surface" : "Creating extruded surface");
+            });
+        }
+
         // ================================================================== mesh
 
         private void UnloadMesh()
@@ -1044,6 +1142,7 @@ namespace MeshFit.SolidWorks
                 replace = answer == DialogResult.Yes;
             }
             Run(() => _addin.CreateSurfaces(regions, r => replace, Report), title: "Creating surfaces");
+            if (regions.Count == 1 && regions[0] == S.ActiveRegion && regions[0].FeatureName != null) AfterCreate();
             _result.Text = _status.Text;
         }
 

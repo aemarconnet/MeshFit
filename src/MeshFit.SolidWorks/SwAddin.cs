@@ -25,7 +25,7 @@ namespace MeshFit.SolidWorks
     [ComVisible(true)]
     [Guid("6F1C2A7E-3B4D-4E8A-9C21-5D7B0E9A4F13")]
     [ProgId("MeshFit.SwAddin")]
-    public sealed class SwAddin : ISwAddin
+    public sealed partial class SwAddin : ISwAddin
     {
         private const string Title = "MeshFit";
         private const string Description = "Paint mesh regions and fit planes, cylinders, cones, spheres, tori and freeform surfaces.";
@@ -36,6 +36,7 @@ namespace MeshFit.SolidWorks
         private TaskPaneControl _control;
         private ViewHook _hook;
         private IModelDoc2 _hookedDoc;
+        private int _cookie;
 
         static SwAddin()
         {
@@ -60,6 +61,7 @@ namespace MeshFit.SolidWorks
             try
             {
                 _app = (ISldWorks)thisSw;
+                _cookie = cookie;
                 _app.SetAddinCallbackInfo2(0, this, cookie);
                 _math = (IMathUtility)_app.GetMathUtility();
                 Renderer = new OverlayRenderer(Session);
@@ -71,6 +73,8 @@ namespace MeshFit.SolidWorks
                 _pane.DisplayWindowFromHandlex64(_control.Handle.ToInt64());
 
                 ((SldWorks)_app).ActiveModelDocChangeNotify += OnActiveDocChanged;
+                try { AddContextMenus(); }
+                catch (Exception ex) { Trace.WriteLine("MeshFit context menu: " + ex); }
                 return true;
             }
             catch (Exception ex)
@@ -85,6 +89,7 @@ namespace MeshFit.SolidWorks
             try
             {
                 ((SldWorks)_app).ActiveModelDocChangeNotify -= OnActiveDocChanged;
+                RemoveContextMenus();
                 Unhook();
                 _pane?.DeleteView();
                 _control?.Dispose();
@@ -132,7 +137,16 @@ namespace MeshFit.SolidWorks
             _hookedDoc = null;
         }
 
-        internal void Redraw() => _hook?.Redraw();
+        /// <summary>Repaints the hooked view. Safe to call from worker threads (marshals to the UI thread).</summary>
+        internal void Redraw()
+        {
+            if (_control != null && _control.IsHandleCreated && _control.InvokeRequired)
+            {
+                _control.BeginInvoke((Action)Redraw);
+                return;
+            }
+            _hook?.Redraw();
+        }
 
         internal void ZoomToMesh()
         {
@@ -200,10 +214,14 @@ namespace MeshFit.SolidWorks
             ZoomToMesh();
         }
 
-        /// <summary>Creates SOLIDWORKS surface features for the given (already fitted) regions.</summary>
-        internal string CreateSurfaces(IEnumerable<Region> regions)
+        /// <summary>
+        /// Creates SOLIDWORKS surface features for the given (already fitted) regions.
+        /// <paramref name="replace"/> decides per region whether an existing MeshFit surface is deleted first.
+        /// </summary>
+        internal string CreateSurfaces(IEnumerable<Region> regions, Func<Region, bool> replace)
         {
             var part = ActivePart ?? throw new InvalidOperationException("Activate a part document to create surfaces in.");
+            var doc = (IModelDoc2)part;
             var builder = new SwSurfaceBuilder(_app);
             var log = new List<string>();
             foreach (var r in regions)
@@ -211,13 +229,51 @@ namespace MeshFit.SolidWorks
                 if (r.Fit?.Surface == null) { log.Add($"{r.Name}: not fitted"); continue; }
                 try
                 {
-                    builder.CreateFeature(part, r.Fit.Surface, Session.RegionPoints(r, 3000), Session.ExtentMargin, r.Name, out string how);
-                    log.Add($"{r.Name}: created ({how})");
+                    var old = FindFeature(r);
+                    if (old != null && replace(r))
+                    {
+                        doc.ClearSelection2(true);
+                        old.Select2(false, 0);
+                        doc.Extension.DeleteSelection2(0);
+                    }
+                    var feat = builder.CreateFeature(part, r.Fit.Surface, Session.RegionPoints(r, 3000), Session.ExtentMargin, r.Name, out string how);
+                    r.FeatureName = feat.Name;
+                    r.SurfaceHidden = false;
+                    log.Add($"{r.Name}: created '{feat.Name}' ({how})");
                 }
                 catch (Exception ex) { log.Add($"{r.Name}: FAILED – {ex.Message}"); }
             }
-            ((IModelDoc2)part).GraphicsRedraw2();
+            doc.ClearSelection2(true);
+            doc.GraphicsRedraw2();
+            Session.RaiseChanged();
             return string.Join(System.Environment.NewLine, log);
+        }
+
+        internal Feature FindFeature(Region r)
+        {
+            if (string.IsNullOrEmpty(r.FeatureName) || ActivePart == null) return null;
+            return ActivePart.FeatureByName(r.FeatureName) as Feature;
+        }
+
+        /// <summary>Hides or shows the surface bodies created from the regions. Returns how many changed.</summary>
+        internal int SetSurfacesHidden(IEnumerable<Region> regions, bool hidden)
+        {
+            int n = 0;
+            foreach (var r in regions)
+            {
+                var feat = FindFeature(r);
+                if (feat == null) continue;
+                var bodies = new List<Body2>();
+                if (feat.GetFaces() is object[] faces)
+                    foreach (Face2 f in faces)
+                        if (f.GetBody() is Body2 b && !bodies.Any(x => x.Name == b.Name)) bodies.Add(b);
+                foreach (var b in bodies) b.HideBody(hidden);
+                r.SurfaceHidden = hidden;
+                n++;
+            }
+            (_app.ActiveDoc as IModelDoc2)?.GraphicsRedraw2();
+            Session.RaiseChanged();
+            return n;
         }
 
         internal void ExportIges(string path, IEnumerable<Region> regions)

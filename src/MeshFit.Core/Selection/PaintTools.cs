@@ -15,7 +15,11 @@ namespace MeshFit.Core.Selection
         /// <paramref name="center"/>. Connectivity prevents painting through to the back side of a panel.
         /// </summary>
         /// <param name="onlyUnassigned">Do not steal triangles already owned by other regions.</param>
-        public static int Brush(RegionSet set, int seedTri, Vec3 center, double radius, int regionId, bool onlyUnassigned = false)
+        public static int Brush(RegionSet set, int seedTri, Vec3 center, double radius, int regionId, bool onlyUnassigned = false) =>
+            Brush(set, seedTri, center, radius, regionId, t => CanWrite(set, t, regionId, onlyUnassigned));
+
+        /// <summary>Brush with an explicit filter deciding which triangles may change.</summary>
+        public static int Brush(RegionSet set, int seedTri, Vec3 center, double radius, int regionId, Func<int, bool> canChange)
         {
             var m = set.Mesh;
             double r2 = radius * radius;
@@ -23,7 +27,48 @@ namespace MeshFit.Core.Selection
             Flood(m, seedTri, t =>
             {
                 if (m.Centroids[t].DistanceSquaredTo(center) > r2 && t != seedTri) return false;
-                if (CanWrite(set, t, regionId, onlyUnassigned) && set.Assign(t, regionId)) changed++;
+                if (canChange(t) && set.Assign(t, regionId)) changed++;
+                return true;
+            });
+            return changed;
+        }
+
+        /// <summary>
+        /// Unselects the smooth patch under the seed: triangles connected across edges smoother than
+        /// <paramref name="maxEdgeAngleDeg"/> that pass <paramref name="canChange"/> (e.g. "owned by the active region").
+        /// </summary>
+        public static int RemoveSmooth(RegionSet set, int seedTri, double maxEdgeAngleDeg, Func<int, bool> canChange)
+        {
+            var m = set.Mesh;
+            if (set.OwnerOf(seedTri) == RegionSet.None || !canChange(seedTri)) return 0;
+            double cosEdge = Math.Cos(maxEdgeAngleDeg * Math.PI / 180);
+            var seen = new HashSet<int> { seedTri };
+            var q = new Queue<int>();
+            q.Enqueue(seedTri);
+            int changed = 0;
+            while (q.Count > 0)
+            {
+                int t = q.Dequeue();
+                if (set.Assign(t, RegionSet.None)) changed++;
+                for (int k = 0; k < 3; k++)
+                {
+                    int nb = m.Neighbors[t * 3 + k];
+                    if (nb < 0 || !seen.Add(nb)) continue;
+                    if (set.OwnerOf(nb) == RegionSet.None || !canChange(nb)) continue;
+                    if (m.FaceNormals[t].Dot(m.FaceNormals[nb]) < cosEdge) continue;
+                    q.Enqueue(nb);
+                }
+            }
+            return changed;
+        }
+
+        /// <summary>Unselects every triangle of the connected shell under the seed that passes the filter.</summary>
+        public static int RemoveConnected(RegionSet set, int seedTri, Func<int, bool> canChange)
+        {
+            int changed = 0;
+            Flood(set.Mesh, seedTri, t =>
+            {
+                if (set.OwnerOf(t) != RegionSet.None && canChange(t) && set.Assign(t, RegionSet.None)) changed++;
                 return true;
             });
             return changed;
@@ -136,6 +181,63 @@ namespace MeshFit.Core.Selection
         }
 
         /// <summary>
+        /// Fills "islands": connected groups of unassigned triangles that are completely enclosed by the
+        /// region (every neighbouring triangle belongs to it and the group has no open mesh edge). These are
+        /// the speckles and small patches a smart fill or brush stroke leaves behind on noisy scans.
+        /// </summary>
+        /// <param name="maxIslandTriangles">Largest island to fill; ≤ 0 means any island smaller than the region itself.</param>
+        /// <returns>Number of triangles added.</returns>
+        public static int FillIslands(RegionSet set, int regionId, int maxIslandTriangles = 0)
+        {
+            var m = set.Mesh;
+            int regionSize = 0;
+            for (int t = 0; t < m.TriangleCount; t++) if (set.OwnerOf(t) == regionId) regionSize++;
+            if (regionSize == 0) return 0;
+            int limit = maxIslandTriangles > 0 ? maxIslandTriangles : regionSize - 1;
+
+            var visited = new bool[m.TriangleCount];
+            var island = new List<int>();
+            int added = 0;
+            for (int seed = 0; seed < m.TriangleCount; seed++)
+            {
+                if (visited[seed] || set.OwnerOf(seed) != RegionSet.None) continue;
+                // Only start from unassigned triangles touching the region.
+                bool touches = false;
+                for (int k = 0; k < 3 && !touches; k++)
+                {
+                    int nb = m.Neighbors[seed * 3 + k];
+                    touches = nb >= 0 && set.OwnerOf(nb) == regionId;
+                }
+                if (!touches) continue;
+
+                island.Clear();
+                island.Add(seed);
+                visited[seed] = true;
+                bool enclosed = true;
+                for (int i = 0; i < island.Count; i++)
+                {
+                    int t = island[i];
+                    for (int k = 0; k < 3; k++)
+                    {
+                        int nb = m.Neighbors[t * 3 + k];
+                        if (nb < 0) { enclosed = false; continue; }          // open edge of the scan
+                        int o = set.OwnerOf(nb);
+                        if (o == regionId) continue;
+                        if (o != RegionSet.None) { enclosed = false; continue; } // touches another region
+                        if (visited[nb]) continue;
+                        visited[nb] = true;
+                        island.Add(nb);
+                    }
+                    if (island.Count > limit) enclosed = false;
+                    // Keep flooding even when not enclosed so the whole component is marked visited.
+                }
+                if (!enclosed) continue;
+                foreach (int t in island) if (set.Assign(t, regionId)) added++;
+            }
+            return added;
+        }
+
+        /// <summary>
         /// Automatic segmentation: splits all unassigned triangles into smooth patches separated by edges
         /// sharper than <paramref name="maxEdgeAngleDeg"/>. Patches smaller than
         /// <paramref name="minTriangles"/> are left unassigned. Returns the created regions.
@@ -146,7 +248,7 @@ namespace MeshFit.Core.Selection
             double cosEdge = Math.Cos(maxEdgeAngleDeg * Math.PI / 180);
             var label = new int[m.TriangleCount];
             var created = new List<Region>();
-            set.BeginStroke();
+            set.BeginStroke("Auto segment");
             for (int seed = 0; seed < m.TriangleCount; seed++)
             {
                 if (label[seed] != 0 || set.OwnerOf(seed) != RegionSet.None) continue;

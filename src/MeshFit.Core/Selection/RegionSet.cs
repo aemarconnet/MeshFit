@@ -16,6 +16,9 @@ namespace MeshFit.Core.Selection
         public FitRequest Request { get; set; } = FitRequest.Auto;
         public FitResult Fit { get; set; }
         public int TriangleCount { get; internal set; }
+        /// <summary>Name of the CAD surface feature created from this region (null if none).</summary>
+        public string FeatureName { get; set; }
+        public bool SurfaceHidden { get; set; }
         public override string ToString() => Name;
     }
 
@@ -36,8 +39,21 @@ namespace MeshFit.Core.Selection
         private readonly List<Region> _regions = new List<Region>();
         private int _nextId = 1;
         private List<(int tri, int before)> _stroke;
-        private readonly Stack<List<(int tri, int before, int after)>> _undo = new Stack<List<(int, int, int)>>();
-        private readonly Stack<List<(int tri, int before, int after)>> _redo = new Stack<List<(int, int, int)>>();
+        private string _strokeLabel;
+        private readonly List<(Region region, int index)> _strokeRemoved = new List<(Region, int)>();
+        private readonly List<Region> _strokeAdded = new List<Region>();
+        private readonly Stack<UndoRecord> _undo = new Stack<UndoRecord>();
+        private readonly Stack<UndoRecord> _redo = new Stack<UndoRecord>();
+
+        private sealed class UndoRecord
+        {
+            public string Label;
+            public List<(int tri, int before, int after)> Changes;
+            /// <summary>Regions deleted by this step (restored on undo) with their list positions.</summary>
+            public List<(Region region, int index)> Removed;
+            /// <summary>Regions created inside this step (removed on undo).</summary>
+            public List<Region> Added;
+        }
 
         public TriMesh Mesh { get; }
         public IReadOnlyList<Region> Regions => _regions;
@@ -59,9 +75,12 @@ namespace MeshFit.Core.Selection
             var r = new Region { Id = _nextId++, Color = Palette[(_nextId - 2) % Palette.Length] };
             r.Name = name ?? "Region " + r.Id;
             _regions.Add(r);
+            RecordAdded(r);
             OnChanged();
             return r;
         }
+
+        private void RecordAdded(Region r) { if (_stroke != null) _strokeAdded.Add(r); }
 
         /// <summary>Recreates a region with a known id (project loading).</summary>
         public Region RestoreRegion(int id, string name, int color, FitRequest request)
@@ -72,13 +91,16 @@ namespace MeshFit.Core.Selection
             return r;
         }
 
+        /// <summary>Deletes a region and frees its triangles. Undoable (the region comes back on undo).</summary>
         public void RemoveRegion(Region r)
         {
-            BeginStroke();
+            bool own = _stroke == null;
+            if (own) BeginStroke("Delete " + r.Name);
             for (int t = 0; t < _owner.Length; t++) if (_owner[t] == r.Id) Assign(t, None);
-            EndStroke();
-            _regions.Remove(r);
-            OnChanged();
+            int idx = _regions.IndexOf(r);
+            if (idx >= 0) { _strokeRemoved.Add((r, idx)); _regions.RemoveAt(idx); }
+            if (own) EndStroke();
+            else OnChanged();
         }
 
         public IEnumerable<int> TrianglesOf(int regionId)
@@ -90,14 +112,30 @@ namespace MeshFit.Core.Selection
 
         // ------------------------------------------------------------ strokes / undo
 
-        public void BeginStroke() { if (_stroke == null) _stroke = new List<(int, int)>(); }
+        /// <summary>Starts recording an undoable step. Nested calls join the open step.</summary>
+        public void BeginStroke(string label = null)
+        {
+            if (_stroke != null) return;
+            _stroke = new List<(int, int)>();
+            _strokeLabel = label;
+            _strokeRemoved.Clear();
+            _strokeAdded.Clear();
+        }
 
         public void EndStroke()
         {
             if (_stroke == null) return;
-            var rec = _stroke.Where(s => _owner[s.tri] != s.before).Select(s => (s.tri, s.before, _owner[s.tri])).ToList();
+            var rec = new UndoRecord
+            {
+                Label = _strokeLabel ?? "Paint",
+                Changes = _stroke.Where(s => _owner[s.tri] != s.before).Select(s => (s.tri, s.before, _owner[s.tri])).ToList(),
+                Removed = new List<(Region, int)>(_strokeRemoved),
+                Added = new List<Region>(_strokeAdded)
+            };
             _stroke = null;
-            if (rec.Count > 0) { _undo.Push(rec); _redo.Clear(); }
+            _strokeRemoved.Clear();
+            _strokeAdded.Clear();
+            if (rec.Changes.Count > 0 || rec.Removed.Count > 0 || rec.Added.Count > 0) { _undo.Push(rec); _redo.Clear(); }
             UpdateCounts();
             OnChanged();
         }
@@ -113,12 +151,18 @@ namespace MeshFit.Core.Selection
 
         public bool CanUndo => _undo.Count > 0;
         public bool CanRedo => _redo.Count > 0;
+        /// <summary>Description of the step Undo would revert (null if none).</summary>
+        public string UndoLabel => _undo.Count > 0 ? _undo.Peek().Label : null;
+        public string RedoLabel => _redo.Count > 0 ? _redo.Peek().Label : null;
 
         public void Undo()
         {
             if (_undo.Count == 0) return;
             var rec = _undo.Pop();
-            for (int i = rec.Count - 1; i >= 0; i--) _owner[rec[i].tri] = rec[i].before;
+            for (int i = rec.Removed.Count - 1; i >= 0; i--)
+                _regions.Insert(Math.Min(rec.Removed[i].index, _regions.Count), rec.Removed[i].region);
+            for (int i = rec.Changes.Count - 1; i >= 0; i--) _owner[rec.Changes[i].tri] = rec.Changes[i].before;
+            foreach (var r in rec.Added) _regions.Remove(r);
             _redo.Push(rec);
             UpdateCounts(); OnChanged();
         }
@@ -127,7 +171,9 @@ namespace MeshFit.Core.Selection
         {
             if (_redo.Count == 0) return;
             var rec = _redo.Pop();
-            foreach (var r in rec) _owner[r.tri] = r.after;
+            foreach (var r in rec.Added) if (!_regions.Contains(r)) _regions.Add(r);
+            foreach (var r in rec.Changes) _owner[r.tri] = r.after;
+            foreach (var (region, _) in rec.Removed) _regions.Remove(region);
             _undo.Push(rec);
             UpdateCounts(); OnChanged();
         }

@@ -149,6 +149,8 @@ namespace MeshFit.Core.Tests
             PaintTools.AutoSegment(set, 20, 1);
             set.Regions[2].Request = FitRequest.Plane;
             set.Regions[2].Name = "Roof panel";
+            set.Regions[2].FeatureName = "Roof panel surface";
+            set.Regions[2].SurfaceHidden = true;
             string dir = Path.Combine(Path.GetTempPath(), "meshfit-test-" + Guid.NewGuid());
             Directory.CreateDirectory(dir);
             try
@@ -165,6 +167,9 @@ namespace MeshFit.Core.Tests
                 Assert.Equal(6, set2.Regions.Count);
                 Assert.Equal("Roof panel", set2.Regions[2].Name);
                 Assert.Equal(FitRequest.Plane, set2.Regions[2].Request);
+                Assert.Equal("Roof panel surface", set2.Regions[2].FeatureName);
+                Assert.True(set2.Regions[2].SurfaceHidden);
+                Assert.Null(set2.Regions[1].FeatureName);
                 Assert.Equal(set.Owners, set2.Owners);
             }
             finally { Directory.Delete(dir, true); }
@@ -197,6 +202,64 @@ namespace MeshFit.Core.Tests
             int k1 = int.Parse(toks[1]), k2 = int.Parse(toks[2]), m1 = int.Parse(toks[3]), m2 = int.Parse(toks[4]);
             int expected = 10 + (k1 + m1 + 2) + (k2 + m2 + 2) + (k1 + 1) * (k2 + 1) * 4 + 4;
             Assert.Equal(expected, toks.Length);
+        }
+
+        [Fact]
+        public void FillIslands_FillsEnclosedHolesOnly()
+        {
+            // 40x40 grid plane; region = everything with x < 60, leaving an enclosed 10x10 hole and an
+            // unpainted band on the right that touches the open mesh border.
+            var m = TestMeshes.Grid((s, t) => new Vec3(s, t, 0), 0, 100, 0, 100, 40, 40);
+            var set = new RegionSet(m);
+            var r = set.AddRegion();
+            var other = set.AddRegion();
+            set.BeginStroke();
+            for (int t = 0; t < m.TriangleCount; t++)
+            {
+                var c = m.Centroids[t];
+                bool hole = c.X > 20 && c.X < 30 && c.Y > 20 && c.Y < 30;
+                bool otherIsland = c.X > 40 && c.X < 45 && c.Y > 40 && c.Y < 45;
+                if (c.X < 60 && !hole && !otherIsland) set.Assign(t, r.Id);
+                if (otherIsland) set.Assign(t, other.Id);
+            }
+            set.EndStroke();
+            int holeTris = Enumerable.Range(0, m.TriangleCount).Count(t => { var c = m.Centroids[t]; return c.X > 20 && c.X < 30 && c.Y > 20 && c.Y < 30; });
+            int before = set.TriangleListOf(r.Id).Count;
+
+            set.BeginStroke();
+            int added = PaintTools.FillIslands(set, r.Id);
+            set.EndStroke();
+
+            Assert.Equal(holeTris, added);
+            Assert.Equal(before + holeTris, set.TriangleListOf(r.Id).Count);
+            Assert.True(set.TriangleListOf(other.Id).Count > 0);                       // other region untouched
+            Assert.True(set.TrianglesOf(r.Id).All(t => m.Centroids[t].X < 60));        // border band not filled
+
+            // Size limit: an island larger than the limit stays empty.
+            set.Undo();
+            Assert.Equal(0, PaintTools.FillIslands(set, r.Id, maxIslandTriangles: holeTris - 1));
+        }
+
+        [Fact]
+        public void Undo_RestoresDeletedRegions_AndRemovesAutoSegmentRegions()
+        {
+            var set = new RegionSet(TestMeshes.Box(10, 4));
+            var regions = PaintTools.AutoSegment(set, 20, 4);
+            Assert.Equal("Auto segment", set.UndoLabel);
+            var victim = regions[2];
+            set.RemoveRegion(victim);
+            Assert.Equal(5, set.Regions.Count);
+            Assert.Equal("Delete " + victim.Name, set.UndoLabel);
+            set.Undo();
+            Assert.Equal(6, set.Regions.Count);
+            Assert.Same(victim, set.Regions[2]);
+            Assert.Equal(32, victim.TriangleCount);
+            set.Undo();
+            Assert.Empty(set.Regions);
+            Assert.All(set.Owners, o => Assert.Equal(RegionSet.None, o));
+            set.Redo(); set.Redo();
+            Assert.Equal(5, set.Regions.Count);
+            Assert.DoesNotContain(victim, set.Regions);
         }
     }
 }

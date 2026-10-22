@@ -40,6 +40,9 @@ namespace MeshFit.Core.Project
             sb.AppendLine("triangles " + set.Mesh.TriangleCount.ToString(Inv));
             foreach (var r in set.Regions)
                 sb.AppendLine(string.Format(Inv, "region {0} {1:X6} {2} {3}", r.Id, r.Color, r.Request, r.Name));
+            foreach (var r in set.Regions)
+                if (!string.IsNullOrEmpty(r.FeatureName))
+                    sb.AppendLine(string.Format(Inv, "feature {0} {1} {2}", r.Id, r.SurfaceHidden ? 1 : 0, r.FeatureName));
             sb.Append("owners");
             var o = set.Owners;
             int i = 0;
@@ -92,6 +95,12 @@ namespace MeshFit.Core.Project
                     var req = (FitRequest)Enum.Parse(typeof(FitRequest), p[3]);
                     set.RestoreRegion(int.Parse(p[1], Inv), p.Length > 4 ? p[4] : "Region " + p[1],
                         int.Parse(p[2], NumberStyles.HexNumber, Inv), req);
+                }
+                else if (line.StartsWith("feature "))
+                {
+                    var p = line.Split(new[] { ' ' }, 4);
+                    var r = set.Find(int.Parse(p[1], Inv));
+                    if (r != null && p.Length == 4) { r.SurfaceHidden = p[2] == "1"; r.FeatureName = p[3]; }
                 }
                 else if (line.StartsWith("owners"))
                 {

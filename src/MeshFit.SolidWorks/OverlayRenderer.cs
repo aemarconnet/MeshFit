@@ -94,9 +94,9 @@ namespace MeshFit.SolidWorks
             if (!_s.HasHover || _s.Tool == PaintTool.None) return;
             var c = _s.HoverPoint;
             var f = Frame.FromAxis(c, _s.HoverNormal);
-            bool brush = _s.Tool == PaintTool.Brush || _s.Tool == PaintTool.Erase;
+            bool brush = _s.Tool == PaintTool.Brush;
             double r = brush ? _s.BrushRadius : 8 * pixelSize;
-            int color = _s.Tool == PaintTool.Erase ? 0xFF4040 : _s.ActiveRegion?.Color ?? 0xFFFFFF;
+            int color = _s.Removing ? 0xFF4040 : _s.ActiveRegion?.Color ?? 0xFFFFFF;
             Gl.glDisable(Gl.GL_DEPTH_TEST);
             Gl.glLineWidth(2f);
             Gl.Color(color, 255);
@@ -108,6 +108,14 @@ namespace MeshFit.SolidWorks
                 Gl.glVertex3d(p.X, p.Y, p.Z);
             }
             Gl.glEnd();
+            if (_s.Removing)
+            {
+                // A minus sign inside the cursor marks remove mode.
+                var a = f.ToWorld(-0.5 * r, 0, 0); var b = f.ToWorld(0.5 * r, 0, 0);
+                Gl.glBegin(Gl.GL_LINES);
+                Gl.glVertex3d(a.X, a.Y, a.Z); Gl.glVertex3d(b.X, b.Y, b.Z);
+                Gl.glEnd();
+            }
             Gl.glBegin(Gl.GL_LINES);
             var n = c + _s.HoverNormal * (r * 0.5);
             Gl.glVertex3d(c.X, c.Y, c.Z); Gl.glVertex3d(n.X, n.Y, n.Z);
@@ -135,27 +143,27 @@ namespace MeshFit.SolidWorks
                 }
             }
 
-            // Painted triangles: region colour, or deviation map for the active region.
+            // Painted triangles: region colour, or the deviation map for every fitted region.
             var regionById = new Dictionary<int, Region>();
             foreach (var r in set.Regions) regionById[r.Id] = r;
             var active = _s.ActiveRegion;
-            bool devMap = _s.ShowDeviation && active?.Fit?.Surface != null;
+            bool devMap = _s.ShowDeviation;
             double tol = _s.FitOptions.Tolerance;
             int count = 0;
-            for (int t = 0; t < nt; t++) if (set.OwnerOf(t) != RegionSet.None) count++;
+            if (_s.ShowRegions) for (int t = 0; t < nt; t++) if (set.OwnerOf(t) != RegionSet.None) count++;
             _paintV = new float[count * 9];
             _paintC = new byte[count * 12];
             int i = 0;
             for (int t = 0; t < nt; t++)
             {
                 int o = set.OwnerOf(t);
-                if (o == RegionSet.None || !regionById.TryGetValue(o, out var reg)) continue;
+                if (!_s.ShowRegions || o == RegionSet.None || !regionById.TryGetValue(o, out var reg)) continue;
                 PutTri(_paintV, i, m.P(t, 0), m.P(t, 1), m.P(t, 2));
                 for (int k = 0; k < 3; k++)
                 {
-                    if (devMap && o == active.Id)
+                    if (devMap && reg.Fit?.Surface != null)
                     {
-                        double d = active.Fit.Surface.Distance(m.P(t, k)) / tol;
+                        double d = VertexDeviation(reg, m.V(t, k)) / tol;
                         DeviationColor(d, out byte r, out byte g, out byte b);
                         PutColor(_paintC, i * 3 + k, r, g, b, 255);
                     }
@@ -230,6 +238,25 @@ namespace MeshFit.SolidWorks
                         prev = p;
                     }
                 }
+        }
+
+        // Per-vertex distances to each region's fit, reused across rebuilds while the fit is unchanged.
+        private readonly Dictionary<int, (FitResult fit, Dictionary<int, double> d)> _devCache =
+            new Dictionary<int, (FitResult, Dictionary<int, double>)>();
+
+        private double VertexDeviation(Region r, int vertex)
+        {
+            if (!_devCache.TryGetValue(r.Id, out var c) || c.fit != r.Fit)
+            {
+                c = (r.Fit, new Dictionary<int, double>());
+                _devCache[r.Id] = c;
+            }
+            if (!c.d.TryGetValue(vertex, out double d))
+            {
+                d = r.Fit.Surface.Distance(_s.Mesh.Vertices[vertex]);
+                c.d[vertex] = d;
+            }
+            return d;
         }
 
         /// <summary>Blue (-tol) → green (0) → red (+tol); magenta beyond tolerance.</summary>

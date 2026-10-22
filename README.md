@@ -21,20 +21,28 @@ that doesn't match, MeshFit falls back to an exact rational B-spline.
 ## Features
 
 - **Painting in the graphics area**
-  - Brush and Erase with an adjustable radius. Hold Shift to erase.
-  - Smart fill grows a region until it reaches an edge sharper than the angle you set.
+  - Smart fill grows a region until it reaches an edge sharper than the angle you set. Click, or
+    drag across several patches.
+  - Brush with an adjustable radius.
   - Fill shell fills a whole connected piece.
+  - **+ Add / − Remove** mode switches every tool between painting and unselecting. Hold Shift for
+    a temporary switch.
+  - Fill islands fills unpainted holes enclosed by the region; it also runs automatically after
+    each Smart fill.
   - Pick region makes the region under the cursor the active one.
   - Grow ring and Shrink ring add or remove one band of triangles at the region edge.
-  - Undo and redo work per stroke.
+  - Undo and redo cover every paint step, plus region delete, merge and auto segment.
+  - A MeshFit submenu and context toolbar in the SOLIDWORKS right-click menu.
   - Auto segment splits the unpainted mesh into smooth patches.
-- **Grow to surface**: paint a small, clean patch, fit it, then grow the region to every connected
+- **Fit + grow**: paint a small, clean patch, then fit it and grow the region to every connected
   triangle that lies on that surface. This finds the true edge of each surface on the panel, up to
   the tangent blend lines.
 - **Fit report**: RMS, maximum and 95th-percentile deviation, the share of points within tolerance,
   and every candidate type the Auto mode tried.
-- **Deviation map**: colours the active region by distance to its fit. Blue → green → red spans
-  −tol to +tol. Magenta means the point is out of tolerance.
+- **Deviation map**: colours every fitted region by its distance to its fit, with a legend in mm
+  and a live readout at the cursor. Blue → green → red spans −tol to +tol. Magenta means the point
+  is out of tolerance.
+- **Hide / show** the created SOLIDWORKS surfaces, all at once or per region.
 - **Iso-line previews** of each fitted surface before you create it.
 - **Outlier rejection**: overspray from painting and scan noise are left out of the final fit.
 - **Project files** (`*.meshfit`) save your painted regions so you can continue later.
@@ -74,31 +82,47 @@ dotnet build src/MeshFit.SolidWorks -c Release -p:SolidWorksInteropDir="C:\Progr
    - **Use bodies in part** uses a mesh body that is already in SOLIDWORKS. Import the STL with
      *File > Open*, choose *Import as: Solid body* or *Surface body* under Options, then
      select the body or one of its faces.
-2. **Make the first region**. Choose a paint tool and left-drag on the mesh. Use the middle mouse
-   button to rotate and pan while a tool is active. For a large, smooth panel, **Smart fill** with an
-   angle of 5–10° is usually the fastest start.
-3. **Fit**. Pick a type, or leave it on *Auto*, and set the tolerance. Typical values are
-   0.05–0.2 mm for a good scan. Then click **Fit active**. Check the report and turn on the
-   **Deviation map**.
-4. **Grow to surface**, then **Fit active** again. Repeat until the region stops growing. The region
-   now covers exactly the triangles that belong to that surface.
-5. Click **New** and repeat for the next surface. Usually you do the large primary surfaces first
-   (skins, flanges, roll-overs), then the feature lines.
-6. Click **Create surface** or **Create all**. Each region becomes a surface feature named after it,
-   extended past the painted area by *Extend %* so that adjacent surfaces overlap.
-7. Finish in SOLIDWORKS:
+2. **Paint the first region**. The yellow banner at the top of the task pane always shows the next
+   step. Pick **Smart fill**: it is selected automatically after loading. Click or drag across a
+   smooth area of the panel; every patch you drag over is filled up to edges sharper than the
+   angle (∠°). Use **Brush** for fine edits. Rotate and pan with the middle mouse button.
+   - **Removing paint:** switch to **− Remove**, or hold **Shift** for a temporary switch. Every
+     tool then unselects instead of painting. *Clear* unselects the whole region.
+   - **Undo / Redo:** the buttons are at the top of the pane. Their tooltips name the step they
+     revert. Undo also brings back deleted or merged regions.
+   - **Fill islands** fills unpainted speckles that are completely enclosed by the region. After
+     every Smart fill, islands up to 500 triangles are filled automatically; you can change that
+     limit in the advanced settings.
+   - **Grow ring / Shrink ring** add or remove one band of triangles at the region's edge.
+   - **Right-click menu:** right-click in the graphics area. The *MeshFit* submenu and the context
+     toolbar hold the tools, Add/Remove, Undo, New region, Fill islands and Fit + grow.
+3. **Pick the surface type** with the shape buttons (Auto, Plane, Sphere, Cylinder, Cone, Torus,
+   Free), then set the tolerance in mm. Typical values are 0.05–0.2 mm for a good scan.
+4. Click **Fit + grow**. MeshFit fits the region, grows it to every connected triangle within
+   tolerance of that surface, and refits, repeating until the region stops growing. This counts as
+   one undo step.
+5. **Check the result.** Turn on **Deviation map** to colour every fitted region by its distance to
+   the surface. The legend is in mm. The readout under it shows the deviation at the cursor.
+6. Click **New region** and repeat for the next surface. Usually you do the large primary surfaces
+   first (skins, flanges, roll-overs), then the feature lines.
+7. Click **Create surface** or **Create all**. Each region becomes a surface feature named after it,
+   extended past the painted area by *Extend %* so that adjacent surfaces overlap. If a region
+   already has a surface, MeshFit asks whether to replace it.
+   - **Hide surfaces / Show surfaces** toggles all MeshFit surfaces so you can keep painting on the
+     mesh. To toggle a single region's surface, right-click it in the region list.
+8. Finish in SOLIDWORKS:
    - Trim the overlapping surfaces against each other with *Trim Surface* (mutual trim).
    - Rebuild the small blends with *Fillet*, or with *Boundary Surface* for curvature continuity.
      Don't fit blends directly.
    - *Knit* the result and thicken it if needed.
-8. Save the painting with **Save project…** so you can come back to it.
+9. Save the painting with **Save project…** so you can come back to it.
 
 ### Tips
 
 - Fit each tangent-continuous primary surface on its own. Leave the narrow blend strips unpainted.
 - A freeform region must be a single-valued "height field" over its average plane. If the report
   warns that a region *folds over*, split it into smaller regions.
-- Freeform controls:
+- Freeform controls (under *Show advanced settings*):
   - *CP u / v* set the size of the control net. 0 means automatic: MeshFit keeps growing the net
     until the tolerance is met.
   - *smooth* sets the bending penalty. Raise it (for example to 1e-8) for a fairer, less wavy

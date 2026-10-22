@@ -10,7 +10,7 @@ namespace MeshFit.SolidWorks
     /// </summary>
     internal sealed class ViewHook : IDisposable
     {
-        private const int MK_SHIFT = 0x0004, MK_CONTROL = 0x0008, MK_LBUTTON = 0x0001;
+        private const int MK_SHIFT = 0x0004, MK_LBUTTON = 0x0001;
 
         private readonly ModelView _view;
         private readonly IModelDoc2 _doc;
@@ -60,11 +60,11 @@ namespace MeshFit.SolidWorks
 
         private int OnLBtnDown(int x, int y, int wParam)
         {
-            if (_session.Tool == PaintTool.None || !_session.HasMesh) return 0;
+            if (_session.Tool == PaintTool.None || !_session.HasMesh || _session.Busy) return 0;
             try
             {
                 Projector.PickLine(x, y, out var p, out var d);
-                _session.MouseDown(p, d, (wParam & MK_SHIFT) != 0, (wParam & MK_CONTROL) != 0);
+                _session.MouseDown(p, d, (wParam & MK_SHIFT) != 0);
                 Redraw();
             }
             catch (Exception ex) { _session.Say("Paint failed: " + ex.Message); }
@@ -83,7 +83,9 @@ namespace MeshFit.SolidWorks
 
         private int OnMove(int x, int y, int wParam)
         {
-            if (_session.Tool == PaintTool.None || !_session.HasMesh) return 0;
+            if (!_session.HasMesh || _session.Busy) return 0;
+            // Without a tool, only track the cursor when the deviation readout needs it.
+            if (_session.Tool == PaintTool.None && !_session.ShowDeviation) return 0;
             try
             {
                 if ((wParam & MK_LBUTTON) == 0 && _session.IsStroking) _session.MouseUp();

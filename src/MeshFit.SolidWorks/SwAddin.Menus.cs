@@ -28,6 +28,7 @@ namespace MeshFit.SolidWorks
             ("Smart fill", Cmd.ToolSmartFill, "Click or drag to fill smooth areas", true),
             ("Brush", Cmd.ToolBrush, "Drag to paint with the brush", true),
             ("Fill shell", Cmd.ToolFillShell, "Click to fill a whole connected piece", false),
+            ("Fillet select", Cmd.ToolFillet, "Click a fillet/blend to select the whole band (curvature based)", false),
             ("Pick region", Cmd.ToolPick, "Click a painted area to make its region active", false),
             ("\"Stop painting@\"", Cmd.ToolOff, "Leave paint mode", true),
             ("Add (paint)", Cmd.ModeAdd, "Tools add triangles to the active region", false),
@@ -38,7 +39,13 @@ namespace MeshFit.SolidWorks
             ("Fill islands", Cmd.FillIslands, "Fill unpainted islands enclosed by the active region", true),
             ("Grow ring", Cmd.GrowRing, "Add one ring of triangles around the active region", false),
             ("Shrink ring", Cmd.ShrinkRing, "Remove the outer ring of triangles", false),
+            ("Clean up paint", Cmd.CleanUp, "Remove stray specks, fill holes and smooth the jagged brush edge", true),
             ("\"Clear region@\"", Cmd.ClearRegion, "Unselect every triangle of the active region", false),
+            ("Brush bigger", Cmd.BrushBigger, "Increase the brush diameter (or Ctrl/Shift + wheel up)", false),
+            ("\"Brush smaller@\"", Cmd.BrushSmaller, "Decrease the brush diameter (or Ctrl/Shift + wheel down)", false),
+            ("Grow to fillets", Cmd.GrowToFillets, "Grow the region up to the adjacent fillets / feature lines", true),
+            ("\"Trim fillets@\"", Cmd.TrimFillets, "Remove the part of the region that runs into adjacent fillets", true),
+            ("Optimize selection", Cmd.Optimize, "Try growing/shrinking/trimming the selection for the best fit", true),
             ("Fit + grow", Cmd.FitAndGrow, "Fit the active region and grow it over its surface", true),
             ("\"Create surface@\"", Cmd.CreateSurface, "Create the SOLIDWORKS surface for the active region", false),
             ("Hide MeshFit surfaces", Cmd.HideSurfaces, "Hide all surfaces created by MeshFit", false),
@@ -103,6 +110,10 @@ namespace MeshFit.SolidWorks
                 case Cmd.ToolBrush: return Session.Tool == PaintTool.Brush ? 3 : 1;
                 case Cmd.ToolSmartFill: return Session.Tool == PaintTool.SmartFill ? 3 : 1;
                 case Cmd.ToolFillShell: return Session.Tool == PaintTool.FillConnected ? 3 : 1;
+                case Cmd.ToolFillet: return Session.Tool == PaintTool.Fillet ? 3 : 1;
+                case Cmd.GrowToFillets:
+                case Cmd.TrimFillets:
+                    return Session.Curvature != null && Session.ActiveRegion?.TriangleCount > 0 ? 1 : 0;
                 case Cmd.ToolPick: return Session.Tool == PaintTool.PickRegion ? 3 : 1;
                 case Cmd.ToolOff: return Session.Tool == PaintTool.None ? 4 : 1;
                 case Cmd.ModeAdd: return Session.RemoveMode ? 1 : 3;
@@ -115,6 +126,8 @@ namespace MeshFit.SolidWorks
                 case Cmd.GrowRing:
                 case Cmd.ShrinkRing:
                 case Cmd.ClearRegion:
+                case Cmd.CleanUp:
+                case Cmd.Optimize:
                     return Session.ActiveRegion?.TriangleCount > 0 ? 1 : 0;
                 default: return 1;
             }
@@ -164,6 +177,23 @@ namespace MeshFit.SolidWorks
                             g.FillEllipse(Brushes.White, 7, 7, 6, 6);
                             g.DrawEllipse(red, 7, 7, 6, 6);
                             break;
+                        case Cmd.CleanUp: // broom
+                            g.DrawLine(pen, 15, 2, 9, 11);
+                            g.FillPolygon(fill, new[] { new PointF(6, 10), new PointF(12, 13), new PointF(9, 19), new PointF(2, 16) });
+                            break;
+                        case Cmd.Optimize: // target
+                            g.DrawEllipse(pen, 2, 2, 16, 16);
+                            g.DrawEllipse(pen, 6, 6, 8, 8);
+                            g.FillEllipse(fill, 8, 8, 4, 4);
+                            break;
+                        case Cmd.GrowToFillets: // arrows out to a curved edge
+                            g.DrawArc(pen, 12, 2, 14, 16, 100, 160);
+                            g.DrawLine(pen, 2, 10, 11, 10); g.DrawLine(pen, 8, 7, 11, 10); g.DrawLine(pen, 8, 13, 11, 10);
+                            break;
+                        case Cmd.TrimFillets: // scissors-like cut at a curved edge
+                            g.DrawArc(pen, 12, 2, 14, 16, 100, 160);
+                            g.DrawLine(red, 3, 5, 10, 15); g.DrawLine(red, 10, 5, 3, 15);
+                            break;
                         case Cmd.FitAndGrow:
                             g.DrawArc(pen, 2, 6, 16, 16, 200, 140);
                             g.DrawLine(pen, 10, 2, 10, 9); g.DrawLine(pen, 7, 5, 10, 2); g.DrawLine(pen, 13, 5, 10, 2);
@@ -183,6 +213,9 @@ namespace MeshFit.SolidWorks
         public void OnMenuToolSmartFill() => Menu(Cmd.ToolSmartFill);
         public void OnMenuToolFillShell() => Menu(Cmd.ToolFillShell);
         public void OnMenuToolPick() => Menu(Cmd.ToolPick);
+        public void OnMenuToolFillet() => Menu(Cmd.ToolFillet);
+        public void OnMenuGrowToFillets() => Menu(Cmd.GrowToFillets);
+        public void OnMenuTrimFillets() => Menu(Cmd.TrimFillets);
         public void OnMenuToolOff() => Menu(Cmd.ToolOff);
         public void OnMenuModeAdd() => Menu(Cmd.ModeAdd);
         public void OnMenuModeRemove() => Menu(Cmd.ToggleMode);
@@ -193,6 +226,10 @@ namespace MeshFit.SolidWorks
         public void OnMenuGrowRing() => Menu(Cmd.GrowRing);
         public void OnMenuShrinkRing() => Menu(Cmd.ShrinkRing);
         public void OnMenuClearRegion() => Menu(Cmd.ClearRegion);
+        public void OnMenuCleanUp() => Menu(Cmd.CleanUp);
+        public void OnMenuOptimize() => Menu(Cmd.Optimize);
+        public void OnMenuBrushBigger() => Menu(Cmd.BrushBigger);
+        public void OnMenuBrushSmaller() => Menu(Cmd.BrushSmaller);
         public void OnMenuFitAndGrow() => Menu(Cmd.FitAndGrow);
         public void OnMenuCreateSurface() => Menu(Cmd.CreateSurface);
         public void OnMenuHideSurfaces() => Menu(Cmd.HideSurfaces);
@@ -202,6 +239,9 @@ namespace MeshFit.SolidWorks
         public int OnMenuEnableToolSmartFill() => Enable(Cmd.ToolSmartFill);
         public int OnMenuEnableToolFillShell() => Enable(Cmd.ToolFillShell);
         public int OnMenuEnableToolPick() => Enable(Cmd.ToolPick);
+        public int OnMenuEnableToolFillet() => Enable(Cmd.ToolFillet);
+        public int OnMenuEnableGrowToFillets() => Enable(Cmd.GrowToFillets);
+        public int OnMenuEnableTrimFillets() => Enable(Cmd.TrimFillets);
         public int OnMenuEnableToolOff() => Enable(Cmd.ToolOff);
         public int OnMenuEnableModeAdd() => Enable(Cmd.ModeAdd);
         public int OnMenuEnableModeRemove() => Enable(Cmd.ModeRemove);
@@ -212,6 +252,10 @@ namespace MeshFit.SolidWorks
         public int OnMenuEnableGrowRing() => Enable(Cmd.GrowRing);
         public int OnMenuEnableShrinkRing() => Enable(Cmd.ShrinkRing);
         public int OnMenuEnableClearRegion() => Enable(Cmd.ClearRegion);
+        public int OnMenuEnableCleanUp() => Enable(Cmd.CleanUp);
+        public int OnMenuEnableOptimize() => Enable(Cmd.Optimize);
+        public int OnMenuEnableBrushBigger() => Enable(Cmd.BrushBigger);
+        public int OnMenuEnableBrushSmaller() => Enable(Cmd.BrushSmaller);
         public int OnMenuEnableFitAndGrow() => Enable(Cmd.FitAndGrow);
         public int OnMenuEnableCreateSurface() => Enable(Cmd.CreateSurface);
         public int OnMenuEnableHideSurfaces() => Enable(Cmd.HideSurfaces);

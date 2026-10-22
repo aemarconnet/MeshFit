@@ -51,6 +51,9 @@ namespace MeshFit.SolidWorks
         }
 
         internal Session Session { get; } = new Session();
+        internal SuggestionEngine Suggestions { get; private set; }
+        /// <summary>Raised when the brush was resized from the view (Ctrl/Shift + wheel).</summary>
+        internal event Action BrushResized;
         internal OverlayRenderer Renderer { get; private set; }
         internal ISldWorks App => _app;
 
@@ -66,6 +69,7 @@ namespace MeshFit.SolidWorks
                 _math = (IMathUtility)_app.GetMathUtility();
                 Renderer = new OverlayRenderer(Session);
                 Session.Changed += Redraw;
+                Suggestions = new SuggestionEngine(Session);
 
                 _pane = _app.CreateTaskpaneView2(WriteIcon(), Title);
                 _control = new TaskPaneControl(this);
@@ -90,6 +94,7 @@ namespace MeshFit.SolidWorks
             {
                 ((SldWorks)_app).ActiveModelDocChangeNotify -= OnActiveDocChanged;
                 RemoveContextMenus();
+                Suggestions?.Dispose();
                 Unhook();
                 _pane?.DeleteView();
                 _control?.Dispose();
@@ -126,6 +131,7 @@ namespace MeshFit.SolidWorks
                 _hookedDoc = doc;
                 _hook = new ViewHook(view, doc, _math, Session, Renderer);
                 _hook.Destroyed += () => { _hook = null; _hookedDoc = null; };
+                _hook.BrushResized += () => BrushResized?.Invoke();
             }
             Redraw();
         }
@@ -158,6 +164,27 @@ namespace MeshFit.SolidWorks
 
         internal IPartDoc ActivePart => _app.ActiveDoc as IPartDoc;
 
+        /// <summary>Computes the curvature field for fillet detection on a worker thread.</summary>
+        internal void ComputeCurvature()
+        {
+            var mesh = Session.Mesh;
+            if (mesh == null) return;
+            double scale = Session.FeatureScale > 0 ? Session.FeatureScale : Curvature.DefaultScale(mesh);
+            Session.Curvature = null;
+            Session.Say("Analysing curvature for fillet detection…");
+            System.Threading.Tasks.Task.Run(() => Curvature.Compute(mesh, scale)).ContinueWith(t =>
+            {
+                if (t.IsFaulted || Session.Mesh != mesh) return;
+                void Apply()
+                {
+                    Session.Curvature = t.Result;
+                    Session.Say($"Fillet detection ready (scale {scale * 1000:0.##} mm).");
+                    Session.RaiseChanged();
+                }
+                if (_control != null && _control.IsHandleCreated) _control.BeginInvoke((Action)Apply); else Apply();
+            });
+        }
+
         // ------------------------------------------------------------------ commands
 
         internal void LoadMeshFile(string path, double scaleToMetres)
@@ -167,6 +194,7 @@ namespace MeshFit.SolidWorks
             Session.MeshScale = scaleToMetres;
             Session.ShowMesh = true;
             Session.SetMesh(mesh, $"{Path.GetFileName(path)}: {mesh.TriangleCount:N0} triangles");
+            ComputeCurvature();
             AttachToActiveView(createPartIfNeeded: true);
             ZoomToMesh();
         }
@@ -183,6 +211,7 @@ namespace MeshFit.SolidWorks
             Session.MeshScale = 1;
             Session.ShowMesh = false; // SOLIDWORKS already shows the body
             Session.SetMesh(mesh, $"{desc}: {mesh.TriangleCount:N0} triangles");
+            ComputeCurvature();
             doc.ClearSelection2(true);
             AttachToActiveView();
         }
@@ -210,6 +239,7 @@ namespace MeshFit.SolidWorks
             Session.MeshPath = h.MeshPath;
             Session.MeshScale = h.Scale;
             Session.SetMesh(mesh, $"{Path.GetFileName(h.MeshPath)}: {mesh.TriangleCount:N0} triangles", regions);
+            ComputeCurvature();
             AttachToActiveView(createPartIfNeeded: true);
             ZoomToMesh();
         }

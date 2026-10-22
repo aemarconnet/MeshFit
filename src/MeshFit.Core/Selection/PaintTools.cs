@@ -77,9 +77,11 @@ namespace MeshFit.Core.Selection
         /// <summary>
         /// Grows from a seed across edges whose dihedral angle is below <paramref name="maxEdgeAngleDeg"/>
         /// and whose normal stays within <paramref name="maxSeedAngleDeg"/> of the seed normal
-        /// (≤ 0 disables that test). Stops at sharp edges and at triangles owned by other regions.
+        /// (≤ 0 disables that test). Stops at sharp edges, at triangles owned by other regions and where
+        /// <paramref name="stop"/> says so (e.g. fillets detected from curvature).
         /// </summary>
-        public static int GrowSmooth(RegionSet set, int seedTri, int regionId, double maxEdgeAngleDeg, double maxSeedAngleDeg = 0)
+        public static int GrowSmooth(RegionSet set, int seedTri, int regionId, double maxEdgeAngleDeg, double maxSeedAngleDeg = 0,
+                                     Func<int, bool> stop = null)
         {
             var m = set.Mesh;
             double cosEdge = Math.Cos(maxEdgeAngleDeg * Math.PI / 180);
@@ -99,6 +101,7 @@ namespace MeshFit.Core.Selection
                     if (nb < 0 || !visited.Add(nb)) continue;
                     if (m.FaceNormals[t].Dot(m.FaceNormals[nb]) < cosEdge) continue;
                     if (m.FaceNormals[nb].Dot(n0) < cosSeed) continue;
+                    if (stop != null && stop(nb)) continue;
                     int o = set.OwnerOf(nb);
                     if (o != RegionSet.None && o != regionId) continue;
                     if (set.Assign(nb, regionId)) changed++;
@@ -115,34 +118,62 @@ namespace MeshFit.Core.Selection
         /// </summary>
         public static int GrowToSurface(RegionSet set, int regionId, FittedSurface surface, double tolerance, double maxNormalDeviationDeg = 20)
         {
-            var m = set.Mesh;
-            double cosN = Math.Cos(maxNormalDeviationDeg * Math.PI / 180);
-            double h = Math.Max(m.AverageEdgeLength * 0.05, 1e-9);
-            var queue = new Queue<int>();
-            var visited = new HashSet<int>();
-            foreach (int t in set.TrianglesOf(regionId)) { queue.Enqueue(t); visited.Add(t); }
+            var mask = MaskOf(set, regionId);
+            var before = (bool[])mask.Clone();
+            MaskOps.GrowToSurface(set.Mesh, mask, t => set.OwnerOf(t) == RegionSet.None, surface, tolerance, maxNormalDeviationDeg);
             int changed = 0;
-            while (queue.Count > 0)
+            for (int t = 0; t < mask.Length; t++)
+                if (mask[t] && !before[t] && set.Assign(t, regionId)) changed++;
+            return changed;
+        }
+
+        public static bool[] MaskOf(RegionSet set, int regionId)
+        {
+            var mask = new bool[set.Mesh.TriangleCount];
+            for (int t = 0; t < mask.Length; t++) mask[t] = set.OwnerOf(t) == regionId;
+            return mask;
+        }
+
+        /// <summary>
+        /// Tidies a hand-painted region: drops fragments smaller than <paramref name="minFragmentFraction"/>
+        /// of the largest piece, fills enclosed islands and smooths the jagged brush boundary with a few
+        /// majority-vote passes (a triangle with two neighbours on the other side flips).
+        /// </summary>
+        public static int CleanUp(RegionSet set, int regionId, double minFragmentFraction = 0.02, int smoothPasses = 2)
+        {
+            var m = set.Mesh;
+            int changed = 0;
+            var mask = MaskOf(set, regionId);
+            var comps = MaskOps.Components(m, mask);
+            if (comps.Count > 1)
             {
-                int t = queue.Dequeue();
-                for (int k = 0; k < 3; k++)
+                int keep = Math.Max(1, (int)(comps[0].Count * minFragmentFraction));
+                foreach (var c in comps)
+                    if (c.Count < keep)
+                        foreach (int t in c) if (set.Assign(t, RegionSet.None)) changed++;
+            }
+            changed += FillIslands(set, regionId);
+            for (int pass = 0; pass < smoothPasses; pass++)
+            {
+                var flipIn = new List<int>();
+                var flipOut = new List<int>();
+                for (int t = 0; t < m.TriangleCount; t++)
                 {
-                    int nb = m.Neighbors[t * 3 + k];
-                    if (nb < 0 || !visited.Add(nb)) continue;
-                    if (set.OwnerOf(nb) != RegionSet.None) continue;
-                    bool ok = true;
-                    for (int c = 0; c < 3 && ok; c++) ok = Math.Abs(surface.Distance(m.P(nb, c))) <= tolerance;
-                    if (!ok) continue;
-                    // Surface normal by finite difference of the distance field at the centroid.
-                    var q = m.Centroids[nb];
-                    var g = new Vec3(
-                        surface.Distance(q + new Vec3(h, 0, 0)) - surface.Distance(q - new Vec3(h, 0, 0)),
-                        surface.Distance(q + new Vec3(0, h, 0)) - surface.Distance(q - new Vec3(0, h, 0)),
-                        surface.Distance(q + new Vec3(0, 0, h)) - surface.Distance(q - new Vec3(0, 0, h)));
-                    if (g.Length > 0 && Math.Abs(g.Normalized().Dot(m.FaceNormals[nb])) < cosN) continue;
-                    if (set.Assign(nb, regionId)) changed++;
-                    queue.Enqueue(nb);
+                    int o = set.OwnerOf(t);
+                    if (o != regionId && o != RegionSet.None) continue;
+                    int inside = 0, outside = 0;
+                    for (int k = 0; k < 3; k++)
+                    {
+                        int nb = m.Neighbors[t * 3 + k];
+                        if (nb < 0) continue;
+                        if (set.OwnerOf(nb) == regionId) inside++; else outside++;
+                    }
+                    if (o == regionId && outside >= 2) flipOut.Add(t);
+                    else if (o == RegionSet.None && inside >= 2) flipIn.Add(t);
                 }
+                if (flipIn.Count + flipOut.Count == 0) break;
+                foreach (int t in flipIn) if (set.Assign(t, regionId)) changed++;
+                foreach (int t in flipOut) if (set.Assign(t, RegionSet.None)) changed++;
             }
             return changed;
         }

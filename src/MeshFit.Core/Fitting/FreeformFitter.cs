@@ -19,6 +19,8 @@ namespace MeshFit.Core.Fitting
         public double Tolerance { get; set; } = 0.1;
         /// <summary>Parameter correction (re-projection) passes.</summary>
         public int ParameterCorrections { get; set; } = 3;
+
+        public FreeformOptions Clone() => (FreeformOptions)MemberwiseClone();
     }
 
     /// <summary>

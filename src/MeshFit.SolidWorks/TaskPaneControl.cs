@@ -29,7 +29,12 @@ namespace MeshFit.SolidWorks
         private Button _undo, _redo;
         private readonly Dictionary<PaintTool, CheckBox> _toolButtons = new Dictionary<PaintTool, CheckBox>();
         private CheckBox _addMode, _removeMode;
-        private NumericUpDown _brushRadius, _smartAngle;
+        private NumericUpDown _brushDiameter, _smartAngle, _blendRadius, _featureScale;
+        private CheckBox _stopAtFillets, _showCurvature, _suggestOn;
+        private Label _suggestText;
+        private Button _suggestApply, _suggestDismiss;
+        private List<SelectionCandidate> _suggestion;
+        private Region _suggestionRegion;
 
         // body
         private ComboBox _units;
@@ -63,7 +68,20 @@ namespace MeshFit.SolidWorks
             _addin = addin;
             Font = new Font("Segoe UI", 8.25f);
             BuildUi();
-            S.Changed += () => { if (!IsDisposed) RefreshAll(); };
+            S.Changed += () =>
+            {
+                if (IsDisposed) return;
+                RefreshAll();
+                if (InvokeRequired) BeginInvoke((Action)(() => _addin.Suggestions?.Poke())); else _addin.Suggestions?.Poke();
+            };
+            _addin.BrushResized += () => { if (!IsDisposed) RefreshAll(); };
+            _addin.Suggestions.Suggested += ShowSuggestion;
+            _addin.Suggestions.RunningChanged += running =>
+            {
+                if (IsDisposed) return;
+                if (running) ShowSuggestion(null, null);
+                SetStatus(running ? "Exploring alternative selections in the background…" : _status.Text.StartsWith("Exploring") ? "Ready." : _status.Text);
+            };
             S.HoverChanged += UpdateHoverReadout;
             S.Status += SetStatus;
             RefreshAll();
@@ -101,8 +119,9 @@ namespace MeshFit.SolidWorks
             {
                 (PaintTool.None, "Off", "No paint tool: SOLIDWORKS works normally."),
                 (PaintTool.SmartFill, "Smart fill", "Click or drag: fills smooth areas up to edges sharper than the angle."),
-                (PaintTool.Brush, "Brush", "Drag to paint inside the brush circle."),
+                (PaintTool.Brush, "Brush", "Drag to paint inside the brush circle. Ctrl+click paints a straight line from the last painted point (view direction), blending the brush size. Ctrl/Shift + wheel resizes."),
                 (PaintTool.FillConnected, "Fill shell", "Click to fill a whole connected piece of mesh."),
+                (PaintTool.Fillet, "Fillet", "Click a fillet or blend (constant or variable radius) to select the whole band, detected from curvature."),
                 (PaintTool.PickRegion, "Pick", "Click painted triangles to make their region active."),
             };
             var toolRow = Row();
@@ -119,11 +138,11 @@ namespace MeshFit.SolidWorks
             _removeMode = Toggle("− Remove", "Tools unselect triangles (hold Shift for a temporary switch).");
             _addMode.Click += (s, e) => Execute(Cmd.ModeAdd);
             _removeMode.Click += (s, e) => Execute(Cmd.ModeRemove);
-            _brushRadius = Num(0.01m, 100000, 10, 2, "Brush radius in mm");
-            _brushRadius.ValueChanged += (s, e) => { if (!_updating) { S.BrushRadius = (double)_brushRadius.Value / 1000; _addin.Redraw(); } };
+            _brushDiameter = Num(0.01m, 100000, 20, 2, "Brush diameter in mm. Ctrl or Shift + mouse wheel in the graphics area resizes it.");
+            _brushDiameter.ValueChanged += (s, e) => { if (!_updating) { S.BrushRadius = (double)_brushDiameter.Value / 2000; _addin.Redraw(); } };
             _smartAngle = Num(0.5m, 90, (decimal)S.SmartAngleDeg, 1, "Smart fill stops at edges sharper than this angle (degrees). Lower = stricter.");
             _smartAngle.ValueChanged += (s, e) => S.SmartAngleDeg = (double)_smartAngle.Value;
-            header.Controls.Add(Row(_addMode, _removeMode, Lbl("r mm"), _brushRadius, Lbl("∠°"), _smartAngle));
+            header.Controls.Add(Row(_addMode, _removeMode, Lbl("Ø mm"), _brushDiameter, Lbl("∠°"), _smartAngle));
 
             // ---- body --------------------------------------------------------------
             var root = new FlowLayoutPanel
@@ -179,8 +198,26 @@ namespace MeshFit.SolidWorks
                        Btn("Clear", () => Execute(Cmd.ClearRegion), "Unselect every triangle of the active region")));
             g2.Add(Row(Btn("Grow ring", () => Execute(Cmd.GrowRing), "Add one ring of triangles around the region"),
                        Btn("Shrink ring", () => Execute(Cmd.ShrinkRing), "Remove the outer ring of triangles"),
+                       Btn("Clean up", () => Execute(Cmd.CleanUp), "Remove stray specks, fill enclosed holes and smooth the jagged brush edge")));
+            g2.Add(Row(Btn("Optimize selection", () => Execute(Cmd.Optimize),
+                           "Try growing, shrinking and trimming the selection (in parallel) and list the alternatives ranked by fit"),
                        Btn("Delete", DeleteRegions, "Delete the selected regions (undoable)")));
             root.Controls.Add(g2.Box);
+
+            // Adjacent features (fillets / blends)
+            var gf = Group("Adjacent fillets & blends");
+            _stopAtFillets = Check("Stop at fillets", true, v => { S.StopAtFillets = v; _addin.Suggestions.Poke(); },
+                "Smart fill, Fit + grow and the optimizer stop where a tangent fillet or blend starts");
+            _blendRadius = Num(0.5m, 10000, (decimal)(S.BlendRadius * 1000), 1,
+                "Blends tighter than this radius (mm) count as adjacent features. Use roughly 1.5× the largest fillet you want detected.");
+            _blendRadius.ValueChanged += (s, e) => { S.BlendRadius = (double)_blendRadius.Value / 1000; if (S.ShowCurvature) S.RaiseChanged(); };
+            gf.Add(Row(_stopAtFillets, Lbl("fillets up to R mm"), _blendRadius));
+            gf.Add(Row(Btn("Grow to fillets", () => Execute(Cmd.GrowToFillets), "Grow the active region over unpainted triangles until it reaches adjacent fillets or sharp edges"),
+                       Btn("Trim fillets", () => Execute(Cmd.TrimFillets), "Remove the part of the active region that runs into adjacent fillets (tangent run-out)")));
+            _showCurvature = Check("Curvature map", false, v => { S.ShowCurvature = v; S.RaiseChanged(); },
+                "Colour the mesh by curvature: grey = flat, orange/red = fillets and feature lines");
+            gf.Add(_showCurvature);
+            root.Controls.Add(gf.Box);
 
             // 3. Fit
             var g3 = Group("Fit");
@@ -223,6 +260,22 @@ namespace MeshFit.SolidWorks
             g3.Add(_hoverReadout);
             _result = new TextBox { Multiline = true, ReadOnly = true, Width = W - 16, Height = 96, ScrollBars = ScrollBars.Vertical };
             g3.Add(_result);
+            _suggestOn = Check("Suggest better selections in the background", true, v =>
+            {
+                _addin.Suggestions.Enabled = v;
+                if (!v) { _addin.Suggestions.Cancel(); ShowSuggestion(null, null); } else _addin.Suggestions.Poke();
+            }, "After you paint, MeshFit tries growing/shrinking/trimming the region and other surface types on spare CPU cores, and offers the best-fitting selection");
+            g3.Add(_suggestOn);
+            _suggestText = new Label
+            {
+                AutoSize = true, MaximumSize = new Size(W - 20, 0), Visible = false, Padding = new Padding(3),
+                BackColor = Color.FromArgb(220, 240, 220), BorderStyle = BorderStyle.FixedSingle
+            };
+            g3.Add(_suggestText);
+            _suggestApply = Btn("Apply suggestion", () => Execute(Cmd.ApplySuggestion), "Replace the region's selection with the suggested one (undoable)");
+            _suggestDismiss = Btn("Dismiss", () => ShowSuggestion(null, null), "Ignore this suggestion");
+            _suggestApply.Visible = _suggestDismiss.Visible = false;
+            g3.Add(Row(_suggestApply, _suggestDismiss));
             root.Controls.Add(g3.Box);
 
             // 4. Surfaces
@@ -244,6 +297,9 @@ namespace MeshFit.SolidWorks
             _activeOnly = Check("Tools only affect the active region", true, v => S.ActiveRegionOnly = v,
                 "Add never steals triangles from other regions; Remove only unselects the active region");
             adv.Controls.Add(_activeOnly);
+            _featureScale = Num(0, 1000, 0, 2, "Neighbourhood (mm) used to estimate curvature. Larger = less sensitive to scan noise, smaller = resolves tighter fillets. 0 = automatic (4× mesh edge length).");
+            adv.Controls.Add(Row(Lbl("Curvature scale mm"), _featureScale,
+                Btn("Recompute", () => { S.FeatureScale = (double)_featureScale.Value / 1000; _addin.ComputeCurvature(); }, "Recompute curvature with this scale")));
             _islandLimit = Num(0, 1000000, S.AutoFillIslandLimit, 0, "After each Smart fill, enclosed unpainted islands up to this many triangles are filled automatically (0 = off)");
             _islandLimit.ValueChanged += (s, e) => S.AutoFillIslandLimit = (int)_islandLimit.Value;
             adv.Controls.Add(Row(Lbl("Auto-fill islands up to"), _islandLimit, Lbl("tris")));
@@ -393,6 +449,29 @@ namespace MeshFit.SolidWorks
                     case Cmd.GrowRing: if (NeedRegion()) S.Ring(S.ActiveRegion, true); break;
                     case Cmd.ShrinkRing: if (NeedRegion()) S.Ring(S.ActiveRegion, false); break;
                     case Cmd.ClearRegion: if (NeedRegion()) S.ClearRegion(S.ActiveRegion); break;
+                    case Cmd.CleanUp:
+                        if (NeedRegion()) SetStatus($"Clean up changed {S.CleanUp(S.ActiveRegion):N0} triangles.");
+                        break;
+                    case Cmd.ToolFillet: SetTool(PaintTool.Fillet); break;
+                    case Cmd.GrowToFillets:
+                        if (NeedRegion()) SetStatus($"Added {S.GrowToFillets(S.ActiveRegion):N0} triangles up to the adjacent features.");
+                        break;
+                    case Cmd.TrimFillets:
+                        if (NeedRegion()) SetStatus($"Removed {S.TrimFillets(S.ActiveRegion):N0} triangles running into fillets.");
+                        break;
+                    case Cmd.ToggleCurvatureMap: _showCurvature.Checked = !_showCurvature.Checked; break;
+                    case Cmd.BrushBigger: S.BrushRadius *= 1.25; RefreshAll(); _addin.Redraw(); break;
+                    case Cmd.BrushSmaller: S.BrushRadius /= 1.25; RefreshAll(); _addin.Redraw(); break;
+                    case Cmd.Optimize: Optimize(); break;
+                    case Cmd.ApplySuggestion:
+                        if (_suggestion != null && _suggestion.Count > 0 && _suggestionRegion != null)
+                        {
+                            S.ApplyCandidate(_suggestionRegion, _suggestion[0]);
+                            SetStatus($"Applied: {_suggestion[0].Description}. Undo reverts it.");
+                            ShowSuggestion(null, null);
+                            ShowResult(S.ActiveRegion);
+                        }
+                        break;
                     case Cmd.Fit: FitRegions(Active()); break;
                     case Cmd.FitAndGrow: FitAndGrow(); break;
                     case Cmd.CreateSurface: CreateSurfaces(Active()); break;
@@ -421,7 +500,7 @@ namespace MeshFit.SolidWorks
         }
 
         /// <summary>Runs work on a worker thread (pure computation only, no SOLIDWORKS calls) or inline.</summary>
-        private void Run(Func<string> work, bool background = false)
+        private void Run(Func<string> work, bool background = false, Action then = null)
         {
             if (!background)
             {
@@ -443,6 +522,7 @@ namespace MeshFit.SolidWorks
                 SetStatus(t.IsFaulted ? "Error: " + t.Exception.GetBaseException().Message : t.Result);
                 ShowResult(S.ActiveRegion);
                 S.RaiseChanged();
+                if (!t.IsFaulted) then?.Invoke();
             })));
         }
 
@@ -508,7 +588,7 @@ namespace MeshFit.SolidWorks
                 _addMode.Checked = !S.RemoveMode;
                 _removeMode.Checked = S.RemoveMode;
                 _removeMode.FlatAppearance.CheckedBackColor = Color.FromArgb(255, 170, 170);
-                _brushRadius.Value = Clamp((decimal)(S.BrushRadius * 1000), _brushRadius);
+                _brushDiameter.Value = Clamp((decimal)(S.BrushRadius * 2000), _brushDiameter);
                 _meshInfo.Text = S.HasMesh ? S.MeshDescription : "No mesh loaded.";
                 foreach (var kv in _typeButtons) kv.Value.Checked = a != null && a.Request == kv.Key;
 
@@ -725,6 +805,99 @@ namespace MeshFit.SolidWorks
             {
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
                 Run(() => { _addin.LoadProject(dlg.FileName); return "Project loaded. Use Fit all to recompute the surfaces."; });
+            }
+        }
+
+        // ================================================================== selection optimizer
+
+        /// <summary>Shows (or hides with null) the background suggestion.</summary>
+        internal void ShowSuggestion(Region r, List<SelectionCandidate> cands)
+        {
+            _suggestion = cands;
+            _suggestionRegion = r;
+            bool show = r != null && cands != null && cands.Count > 0;
+            _suggestText.Visible = _suggestApply.Visible = _suggestDismiss.Visible = show;
+            if (!show) return;
+            var best = cands[0];
+            var painted = cands.FirstOrDefault(c => c.Description == "As painted");
+            string delta = painted == null ? "" : $" ({painted.Triangles.Length:N0} → {best.Triangles.Length:N0} triangles)";
+            _suggestText.Text = $"Suggestion for '{r.Name}': {best.Description}{delta}\n" +
+                                $"{best.Fit.Surface.Describe(1000, "mm")}\n" +
+                                $"RMS {best.Fit.Stats.Rms * 1000:0.###} mm, 95% within {best.Fit.Stats.P95 * 1000:0.###} mm" +
+                                (painted != null ? $" (painted: RMS {painted.Fit.Stats.Rms * 1000:0.###}, 95% {painted.Fit.Stats.P95 * 1000:0.###} mm)" : "");
+        }
+
+        private void Optimize()
+        {
+            if (!NeedRegion()) return;
+            ApplyFitSettings();
+            var r = S.ActiveRegion;
+            var owners = (int[])S.Regions.Owners.Clone();
+            var opt = S.FitOptions.Clone();
+            opt.Request = r.Request;
+            var curvature = S.StopAtFillets ? S.Curvature : null;
+            double blend = S.BlendRadius;
+            List<SelectionCandidate> found = null;
+            Run(() =>
+            {
+                found = SelectionOptimizer.Explore(S.Mesh, owners, r.Id, opt, default, curvature, blend);
+                return $"Optimizer tried {found.Count} selections for '{r.Name}'.";
+            }, background: true, then: () =>
+            {
+                if (found == null || found.Count == 0) return;
+                using (var dlg = new CandidateDialog(found, S.FitOptions.Tolerance))
+                    if (dlg.ShowDialog(this) == DialogResult.OK && dlg.Chosen != null)
+                    {
+                        S.ApplyCandidate(r, dlg.Chosen);
+                        ShowResult(r);
+                        SetStatus($"Applied: {dlg.Chosen.Description}. Undo reverts it.");
+                    }
+            });
+        }
+
+        /// <summary>Lists optimizer candidates (best first) for the user to pick from.</summary>
+        private sealed class CandidateDialog : Form
+        {
+            public SelectionCandidate Chosen { get; private set; }
+
+            public CandidateDialog(List<SelectionCandidate> cands, double tol)
+            {
+                Text = "MeshFit – selection alternatives";
+                Width = 640; Height = 340;
+                StartPosition = FormStartPosition.CenterParent;
+                Font = new Font("Segoe UI", 8.25f);
+                var tips = new ToolTip();
+                var lv = new ListView { View = View.Details, FullRowSelect = true, Dock = DockStyle.Fill, MultiSelect = false };
+                lv.Columns.Add("Selection", 210); lv.Columns.Add("Type", 70); lv.Columns.Add("Triangles", 70);
+                lv.Columns.Add("RMS mm", 60); lv.Columns.Add("95% mm", 60); lv.Columns.Add("Max mm", 60); lv.Columns.Add("OK", 40);
+                foreach (var c in cands)
+                {
+                    var it = new ListViewItem(c.Description) { Tag = c };
+                    it.SubItems.Add(c.Fit.Surface.Kind.ToString());
+                    it.SubItems.Add(c.Triangles.Length.ToString("N0", CultureInfo.InvariantCulture));
+                    it.SubItems.Add((c.Fit.Stats.Rms * 1000).ToString("0.###", CultureInfo.InvariantCulture));
+                    it.SubItems.Add((c.Fit.Stats.P95 * 1000).ToString("0.###", CultureInfo.InvariantCulture));
+                    it.SubItems.Add((c.Fit.Stats.MaxAbs * 1000).ToString("0.###", CultureInfo.InvariantCulture));
+                    it.SubItems.Add(c.Valid ? "✓" : "");
+                    if (!c.Valid) it.ForeColor = SystemColors.GrayText;
+                    lv.Items.Add(it);
+                }
+                if (lv.Items.Count > 0) lv.Items[0].Selected = true;
+                tips.SetToolTip(lv, $"Ranked: largest selection whose 95% deviation is within ±{tol * 1000:0.###} mm first; ✓ = meets tolerance");
+                var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Padding = new Padding(4) };
+                var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
+                var apply = new Button { Text = "Apply selected", AutoSize = true };
+                tips.SetToolTip(apply, "Replace the region's triangles with the selected alternative (undoable)");
+                tips.SetToolTip(cancel, "Keep the current selection");
+                apply.Click += (s, e) =>
+                {
+                    Chosen = lv.SelectedItems.Count > 0 ? (SelectionCandidate)lv.SelectedItems[0].Tag : null;
+                    DialogResult = DialogResult.OK;
+                };
+                lv.DoubleClick += (s, e) => apply.PerformClick();
+                bottom.Controls.Add(cancel); bottom.Controls.Add(apply);
+                Controls.Add(lv); Controls.Add(bottom);
+                AcceptButton = apply; CancelButton = cancel;
             }
         }
 

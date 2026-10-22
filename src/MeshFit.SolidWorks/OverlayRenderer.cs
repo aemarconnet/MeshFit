@@ -53,7 +53,7 @@ namespace MeshFit.SolidWorks
 
                 // Painted regions sit slightly in front of the mesh (and of a SOLIDWORKS mesh body).
                 Gl.glPolygonOffset(-1f, -2f);
-                if (_s.ShowMesh) DrawArrays(Gl.GL_TRIANGLES, _meshV, _meshC);
+                if (_s.ShowMesh || _s.ShowCurvature) DrawArrays(Gl.GL_TRIANGLES, _meshV, _meshC);
                 Gl.glPolygonOffset(-2f, -4f);
                 DrawArrays(Gl.GL_TRIANGLES, _paintV, _paintC);
 
@@ -116,6 +116,22 @@ namespace MeshFit.SolidWorks
                 Gl.glVertex3d(a.X, a.Y, a.Z); Gl.glVertex3d(b.X, b.Y, b.Z);
                 Gl.glEnd();
             }
+            if (_s.LinePreview && _s.LastPaintPoint.HasValue)
+            {
+                // Ctrl held: preview of the straight stroke a click would paint.
+                var a = _s.LastPaintPoint.Value;
+                Gl.glLineWidth(1.5f);
+                Gl.glBegin(Gl.GL_LINES);
+                const int dashes = 24;
+                for (int i = 0; i < dashes; i += 2)
+                {
+                    var p0 = Vec3.Lerp(a, c, (double)i / dashes);
+                    var p1 = Vec3.Lerp(a, c, (double)(i + 1) / dashes);
+                    Gl.glVertex3d(p0.X, p0.Y, p0.Z); Gl.glVertex3d(p1.X, p1.Y, p1.Z);
+                }
+                Gl.glEnd();
+                Gl.glLineWidth(2f);
+            }
             Gl.glBegin(Gl.GL_LINES);
             var n = c + _s.HoverNormal * (r * 0.5);
             Gl.glVertex3d(c.X, c.Y, c.Z); Gl.glVertex3d(n.X, n.Y, n.Z);
@@ -129,17 +145,29 @@ namespace MeshFit.SolidWorks
             int nt = m.TriangleCount;
 
             // Whole mesh in neutral grey, shaded by a fixed head light on the normal so it reads as 3D.
-            // The grey mesh only changes when a different mesh is loaded.
-            if (_s.ShowMesh && !ReferenceEquals(_meshBuiltFor, m))
+            // The mesh layer (grey, or the curvature map) only changes with the mesh or the display mode.
+            var key = (m, _s.ShowCurvature ? _s.Curvature : null, _s.ShowCurvature ? _s.BlendRadius : 0);
+            if ((_s.ShowMesh || _s.ShowCurvature) && !Equals(_meshBuiltFor, key))
             {
-                _meshBuiltFor = m;
+                _meshBuiltFor = key;
                 _meshV = new float[nt * 9]; _meshC = new byte[nt * 12];
                 var light = new Vec3(0.3, 0.5, 0.81).Normalized();
+                var curv = _s.ShowCurvature ? _s.Curvature : null;
                 for (int t = 0; t < nt; t++)
                 {
                     PutTri(_meshV, t, m.P(t, 0), m.P(t, 1), m.P(t, 2));
-                    byte g = (byte)(110 + 110 * Math.Abs(m.FaceNormals[t].Dot(light)));
-                    for (int k = 0; k < 3; k++) PutColor(_meshC, t * 3 + k, g, g, g, 255);
+                    double shade = 0.45 + 0.45 * Math.Abs(m.FaceNormals[t].Dot(light));
+                    byte r, g, b;
+                    if (curv != null)
+                    {
+                        // 0 → grey, 1/blend radius → orange, ≥ 2/blend radius → red.
+                        double k = Math.Min(1, curv.KMax[t] * _s.BlendRadius / 2);
+                        r = (byte)(255 * shade * (0.6 + 0.4 * k));
+                        g = (byte)(255 * shade * (0.6 - 0.35 * k));
+                        b = (byte)(255 * shade * (0.6 - 0.6 * k));
+                    }
+                    else r = g = b = (byte)(255 * shade);
+                    for (int k2 = 0; k2 < 3; k2++) PutColor(_meshC, t * 3 + k2, r, g, b, 255);
                 }
             }
 

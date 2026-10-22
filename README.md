@@ -34,6 +34,24 @@ that doesn't match, MeshFit falls back to an exact rational B-spline.
   - Undo and redo cover every paint step, plus region delete, merge and auto segment.
   - A MeshFit submenu and context toolbar in the SOLIDWORKS right-click menu.
   - Auto segment splits the unpainted mesh into smooth patches.
+- **Mouse handling while painting**
+  - A paint tool takes the left mouse button directly, so SOLIDWORKS doesn't draw a selection box.
+  - **Ctrl+click** paints a straight line, in the current view, from the last painted point. The
+    brush size blends from the previous size to the current one. A dashed preview shows while Ctrl
+    is held.
+  - **Ctrl/Shift + mouse wheel** resizes the brush. The brush size is shown as a diameter.
+- **Clean up** removes stray specks, fills enclosed holes and smooths the jagged brush edge.
+- **Adjacent fillets and blends.** Detection is based on curvature, because the angle between
+  neighbouring triangles stays small across a tangent blend.
+  - *Stop at fillets* keeps Smart fill, Fit + grow and the optimizer from creeping into fillets.
+  - *Grow to fillets* and *Trim fillets* grow or trim the region at the fillet line.
+  - The *Fillet* tool selects a whole constant- or variable-radius blend band with one click.
+  - A *Curvature map* overlay shows the feature lines.
+- **Selection optimizer and background suggestions.** MeshFit tries growing the selection over
+  each surface type, shrinking its edge, trimming outliers and other tolerances, in parallel. It
+  then proposes the largest selection that still fits within tolerance. A few brush dots on a
+  cylinder are enough: like a CMM fitting a cylinder from a handful of probe points, the suggestion
+  grows to the whole face.
 - **Fit + grow**: paint a small, clean patch, then fit it and grow the region to every connected
   triangle that lies on that surface. This finds the true edge of each surface on the panel, up to
   the tangent blend lines.

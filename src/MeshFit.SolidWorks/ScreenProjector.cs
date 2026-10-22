@@ -49,7 +49,7 @@ namespace MeshFit.SolidWorks
         }
 
         /// <summary>Model-space line through the pixel: point on the line and unit direction toward the viewer.</summary>
-        public void PickLine(int px, int py, out Vec3 point, out Vec3 dir)
+        public void PickLine(double px, double py, out Vec3 point, out Vec3 dir)
         {
             var r0 = new Vec3(_a[0, 0], _a[0, 1], _a[0, 2]);
             var r1 = new Vec3(_a[1, 0], _a[1, 1], _a[1, 2]);
@@ -61,6 +61,13 @@ namespace MeshFit.SolidWorks
             point = r0 * l0 + r1 * l1;
             dir = r0.Cross(r1).Normalized();
             if (dir.Dot(TowardViewer) < 0) dir = -dir;
+        }
+
+        /// <summary>Pixel position of a model point in the current view.</summary>
+        public void ToPixel(Vec3 p, out double x, out double y)
+        {
+            x = _a[0, 0] * p.X + _a[0, 1] * p.Y + _a[0, 2] * p.Z + _b[0];
+            y = _a[1, 0] * p.X + _a[1, 1] * p.Y + _a[1, 2] * p.Z + _b[1];
         }
 
         /// <summary>Model length of one pixel (for screen-constant sizes).</summary>

@@ -8,7 +8,7 @@ using MeshFit.Core.Selection;
 
 namespace MeshFit.SolidWorks
 {
-    internal enum PaintTool { None, Brush, SmartFill, FillConnected, PickRegion }
+    internal enum PaintTool { None, Brush, SmartFill, FillConnected, Fillet, PickRegion }
 
     /// <summary>
     /// All state of one reverse engineering session (mesh, regions, tool settings) plus the painting
@@ -36,6 +36,18 @@ namespace MeshFit.SolidWorks
         public int AutoFillIslandLimit { get; set; } = 500;
 
         public FitOptions FitOptions { get; } = new FitOptions { Tolerance = 0.0002 };
+
+        // ---- feature (fillet) detection
+        /// <summary>Curvature field of the mesh; null until computed (it is computed in the background after loading).</summary>
+        public Curvature Curvature { get; set; }
+        /// <summary>Neighbourhood size for curvature estimation (m). 0 = automatic.</summary>
+        public double FeatureScale { get; set; }
+        /// <summary>Blends tighter than this radius (m) count as adjacent features.</summary>
+        public double BlendRadius { get; set; } = 0.03;
+        /// <summary>Smart fill and growing stop where an adjacent fillet starts.</summary>
+        public bool StopAtFillets { get; set; } = true;
+        public bool ShowCurvature { get; set; }
+        private bool UseFeatures => StopAtFillets && Curvature != null;
         public double ExtentMargin { get; set; } = 0.1;
 
         public bool ShowMesh { get; set; } = true;
@@ -58,6 +70,12 @@ namespace MeshFit.SolidWorks
         private Vec3? _lastStrokePoint;
         private int _lastStrokeTri = -1;
 
+        /// <summary>Where the previous stroke ended and with which brush radius (anchor for Ctrl+click lines).</summary>
+        public Vec3? LastPaintPoint { get; private set; }
+        public double LastPaintRadius { get; private set; }
+        /// <summary>Ctrl is held: the overlay previews the straight line a Ctrl+click would paint.</summary>
+        public bool LinePreview { get; set; }
+
         /// <summary>Raised when geometry/regions change (overlay must be rebuilt).</summary>
         public event Action Changed;
         /// <summary>Raised when only the cursor moved (cheap redraw).</summary>
@@ -72,6 +90,7 @@ namespace MeshFit.SolidWorks
         public void SetMesh(TriMesh mesh, string description, RegionSet regions = null)
         {
             Mesh = mesh;
+            Curvature = null;
             Regions = regions ?? new RegionSet(mesh);
             Regions.Changed += (s, e) => RaiseChanged();
             ActiveRegion = Regions.Regions.FirstOrDefault() ?? Regions.AddRegion();
@@ -115,42 +134,58 @@ namespace MeshFit.SolidWorks
                     try { HoverDeviation = r.Fit.Surface.Distance(hit); } catch { HoverDeviation = null; }
                 }
             }
-            if (_stroking && t >= 0) StrokeTo(t, hit);
-            else if (HasHover || had) HoverChanged?.Invoke();
+            if (HasHover || had) HoverChanged?.Invoke();
         }
 
-        public void MouseDown(Vec3 linePoint, Vec3 dir, bool shift)
+        /// <summary>
+        /// Starts a stroke at the pick line. Returns false when nothing was hit or the tool doesn't paint
+        /// (Pick region is handled here directly).
+        /// </summary>
+        public bool BeginStroke(Vec3 linePoint, Vec3 dir, bool invert)
         {
-            if (Mesh == null || Tool == PaintTool.None || Busy) return;
-            int t = Pick(linePoint, dir, out var hit);
-            if (t < 0) return;
+            if (Mesh == null || Tool == PaintTool.None || Busy) return false;
+            int t = Pick(linePoint, dir, out _);
             if (Tool == PaintTool.PickRegion)
             {
-                var r = Regions.Find(Regions.OwnerOf(t));
+                var r = t >= 0 ? Regions.Find(Regions.OwnerOf(t)) : null;
                 if (r != null) { ActiveRegion = r; RaiseChanged(); Say("Active region: " + r.Name); }
-                return;
+                return false;
             }
             EnsureRegion();
-            _strokeRemove = RemoveMode ^ shift;
+            _strokeRemove = RemoveMode ^ invert;
             _stroking = true;
             _lastStrokePoint = null;
             _lastStrokeTri = -1;
             Regions.BeginStroke((_strokeRemove ? "Remove (" : "Paint (") + ToolName(Tool) + ")");
-            StrokeTo(t, hit);
+            return true;
+        }
+
+        /// <summary>Paints at the pick line with the given brush radius (m). Returns false if the line misses the mesh.</summary>
+        public bool StrokeSample(Vec3 linePoint, Vec3 dir, double radius)
+        {
+            if (!_stroking) return false;
+            int t = Pick(linePoint, dir, out var hit);
+            if (t < 0) return false;
+            StrokeTo(t, hit, radius);
+            return true;
         }
 
         public static string ToolName(PaintTool t) =>
-            t == PaintTool.SmartFill ? "smart fill" : t == PaintTool.FillConnected ? "fill shell" : t.ToString().ToLowerInvariant();
+            t == PaintTool.SmartFill ? "smart fill" : t == PaintTool.FillConnected ? "fill shell" :
+            t == PaintTool.Fillet ? "fillet select" : t.ToString().ToLowerInvariant();
 
-        public void MouseUp()
+        public void EndStroke()
         {
             if (!_stroking) return;
             _stroking = false;
+            if (_lastStrokePoint.HasValue) { LastPaintPoint = _lastStrokePoint; LastPaintRadius = _lastRadius; }
             _lastStrokePoint = null;
             if (Tool == PaintTool.SmartFill && !_strokeRemove && AutoFillIslandLimit > 0 && ActiveRegion != null)
                 PaintTools.FillIslands(Regions, ActiveRegion.Id, AutoFillIslandLimit);
             Regions.EndStroke();
         }
+
+        private double _lastRadius;
 
         /// <summary>Which triangles a stroke may modify.</summary>
         private bool CanChange(int t)
@@ -160,8 +195,9 @@ namespace MeshFit.SolidWorks
             return !ActiveRegionOnly || o == RegionSet.None || o == ActiveRegion.Id;
         }
 
-        private void StrokeTo(int tri, Vec3 hit)
+        private void StrokeTo(int tri, Vec3 hit, double radius)
         {
+            _lastRadius = radius;
             int target = _strokeRemove ? RegionSet.None : ActiveRegion.Id;
             switch (Tool)
             {
@@ -170,22 +206,43 @@ namespace MeshFit.SolidWorks
                     if (_lastStrokePoint.HasValue)
                     {
                         var a = _lastStrokePoint.Value;
-                        int steps = (int)Math.Min(50, Math.Floor(a.DistanceTo(hit) / (BrushRadius * 0.5)));
+                        int steps = (int)Math.Min(50, Math.Floor(a.DistanceTo(hit) / (radius * 0.5)));
                         for (int i = 1; i <= steps; i++)
                         {
                             var p = Vec3.Lerp(a, hit, (double)i / (steps + 1));
                             int t = Mesh.Bvh.Nearest(p, out var c);
-                            if (t >= 0) PaintTools.Brush(Regions, t, c, BrushRadius, target, CanChange);
+                            if (t >= 0) PaintTools.Brush(Regions, t, c, radius, target, CanChange);
                         }
                     }
-                    PaintTools.Brush(Regions, tri, hit, BrushRadius, target, CanChange);
+                    PaintTools.Brush(Regions, tri, hit, radius, target, CanChange);
                     break;
 
                 case PaintTool.SmartFill:
                     // Dragging keeps filling every new smooth patch the cursor passes over.
                     if (tri == _lastStrokeTri || Regions.OwnerOf(tri) == target) break;
                     if (_strokeRemove) PaintTools.RemoveSmooth(Regions, tri, SmartAngleDeg, CanChange);
-                    else if (CanChange(tri)) PaintTools.GrowSmooth(Regions, tri, target, SmartAngleDeg);
+                    else if (CanChange(tri))
+                    {
+                        // Stop at tangent fillets too (edge angles stay small across them).
+                        var stop = UseFeatures
+                            ? FeatureTools.IsFeature(Curvature, FeatureTools.SeedBaseline(Mesh, Curvature, tri), BlendRadius)
+                            : null;
+                        if (stop == null || !stop(tri)) PaintTools.GrowSmooth(Regions, tri, target, SmartAngleDeg, 0, stop);
+                    }
+                    break;
+
+                case PaintTool.Fillet:
+                    if (tri == _lastStrokeTri || Regions.OwnerOf(tri) == target) break;
+                    if (Curvature == null) { Say("Curvature is still being computed — try again in a moment."); break; }
+                    if (_strokeRemove)
+                    {
+                        var band = new RegionSet(Mesh);
+                        var tmp = band.AddRegion();
+                        FeatureTools.SelectFeatureBand(band, tri, tmp.Id, Curvature, BlendRadius, false);
+                        foreach (int t in band.TriangleListOf(tmp.Id)) if (Regions.OwnerOf(t) != RegionSet.None && CanChange(t)) Regions.Assign(t, RegionSet.None);
+                    }
+                    else if (FeatureTools.SelectFeatureBand(Regions, tri, target, Curvature, BlendRadius, ActiveRegionOnly) == 0)
+                        Say("No fillet under the cursor (curvature below 1 / blend radius).");
                     break;
 
                 case PaintTool.FillConnected:
@@ -224,6 +281,31 @@ namespace MeshFit.SolidWorks
             return n;
         }
 
+        public int CleanUp(Region r)
+        {
+            Regions.BeginStroke("Clean up " + r.Name);
+            int n = PaintTools.CleanUp(Regions, r.Id);
+            Regions.EndStroke();
+            return n;
+        }
+
+        /// <summary>Replaces the region's triangles with a candidate selection (one undo step).</summary>
+        public void ApplyCandidate(Region r, SelectionCandidate c)
+        {
+            var keep = new HashSet<int>(c.Triangles);
+            Regions.BeginStroke("Optimized selection");
+            foreach (int t in Regions.TriangleListOf(r.Id)) if (!keep.Contains(t)) Regions.Assign(t, RegionSet.None);
+            foreach (int t in c.Triangles)
+            {
+                int o = Regions.OwnerOf(t);
+                if (o == RegionSet.None || o == r.Id) Regions.Assign(t, r.Id);
+            }
+            r.Fit = c.Fit;
+            // Lock the type the candidate was found with, so later refits stay consistent.
+            r.Request = (FitRequest)Enum.Parse(typeof(FitRequest), c.Fit.Surface.Kind.ToString());
+            Regions.EndStroke();
+        }
+
         public void ClearRegion(Region r)
         {
             Regions.BeginStroke("Clear " + r.Name);
@@ -252,18 +334,37 @@ namespace MeshFit.SolidWorks
             return res;
         }
 
+        /// <summary>Which unpainted triangles growing may take (excludes adjacent fillets when enabled).</summary>
+        private Func<int, bool> GrowAvailable(Region r)
+        {
+            Func<int, bool> free = t => Regions.OwnerOf(t) == RegionSet.None;
+            if (!UseFeatures) return free;
+            var feature = FeatureTools.IsFeature(Curvature, Curvature.MedianKMax(Regions.TrianglesOf(r.Id)), BlendRadius);
+            return t => free(t) && !feature(t);
+        }
+
+        private int Grow(Region r)
+        {
+            var mask = PaintTools.MaskOf(Regions, r.Id);
+            var before = (bool[])mask.Clone();
+            MaskOps.GrowToSurface(Mesh, mask, GrowAvailable(r), r.Fit.Surface, FitOptions.Tolerance);
+            int n = 0;
+            for (int t = 0; t < mask.Length; t++) if (mask[t] && !before[t] && Regions.Assign(t, r.Id)) n++;
+            return n;
+        }
+
         public int GrowToSurface(Region r)
         {
             if (r.Fit?.Surface == null) throw new InvalidOperationException($"Fit '{r.Name}' first.");
             Regions.BeginStroke("Grow to surface");
-            int n = PaintTools.GrowToSurface(Regions, r.Id, r.Fit.Surface, FitOptions.Tolerance);
+            int n = Grow(r);
             Regions.EndStroke();
             return n;
         }
 
         /// <summary>
         /// Fit, grow to everything within tolerance of the fit, refit — repeated until the region stops
-        /// growing. One undo step.
+        /// growing. Stops at adjacent fillets when enabled. One undo step.
         /// </summary>
         public string FitAndGrow(Region r)
         {
@@ -275,7 +376,7 @@ namespace MeshFit.SolidWorks
                 for (int pass = 0; pass < 8; pass++)
                 {
                     FitRegion(r);
-                    int added = PaintTools.GrowToSurface(Regions, r.Id, r.Fit.Surface, FitOptions.Tolerance);
+                    int added = Grow(r);
                     Regions.UpdateCounts();
                     if (added <= Math.Max(3, r.TriangleCount / 200)) break;
                 }
@@ -284,6 +385,30 @@ namespace MeshFit.SolidWorks
             finally { Regions.EndStroke(); }
             int end = Regions.TriangleListOf(r.Id).Count;
             return $"{r.Name}: {r.Fit.Surface.Kind}, {start:N0} → {end:N0} triangles, max dev {r.Fit.Stats.MaxAbs * 1000:0.###} mm";
+        }
+
+        public int GrowToFillets(Region r)
+        {
+            RequireCurvature();
+            Regions.BeginStroke("Grow to fillets");
+            int n = FeatureTools.GrowToFeatures(Regions, r.Id, Curvature, BlendRadius);
+            Regions.EndStroke();
+            return n;
+        }
+
+        public int TrimFillets(Region r)
+        {
+            RequireCurvature();
+            Regions.BeginStroke("Trim fillets");
+            int n = FeatureTools.TrimFeatures(Regions, r.Id, Curvature, BlendRadius);
+            Regions.EndStroke();
+            if (n > 0) r.Fit = null;
+            return n;
+        }
+
+        private void RequireCurvature()
+        {
+            if (Curvature == null) throw new InvalidOperationException("Curvature is still being computed — try again in a moment.");
         }
 
         public Vec3[] RegionPoints(Region r, int max = int.MaxValue)
@@ -305,7 +430,7 @@ namespace MeshFit.SolidWorks
             if (r == null || r.TriangleCount == 0)
                 return Tool == PaintTool.None
                     ? "Step 2 · Pick 'Smart fill' above, then click or drag on a smooth area of the panel."
-                    : $"Step 2 · Click or drag on the mesh to paint '{r?.Name}'. Middle mouse rotates. Right-click for the MeshFit menu.";
+                    : $"Step 2 · Click or drag to paint '{r?.Name}'. Ctrl+click = straight line, Ctrl/Shift+wheel = brush size, Shift = remove. A few dots on a cylinder are enough: MeshFit suggests the whole face.";
             if (r.Fit == null)
                 return $"Step 3 · Click 'Fit + grow': it fits '{r.Name}' and extends it to every triangle on that surface.";
             if (r.FeatureName == null)

@@ -261,5 +261,63 @@ namespace MeshFit.Core.Tests
             Assert.Equal(5, set.Regions.Count);
             Assert.DoesNotContain(victim, set.Regions);
         }
+
+        [Fact]
+        public void Optimizer_GrowsSixPicksToTheWholeCylinder()
+        {
+            // Plane (x<0) tangent to a cylinder (x>0). Six small brush dots on the cylinder part.
+            const double R = 100;
+            Vec3 F(double s, double t) => s < 0 ? new Vec3(s, t, 0) : new Vec3(R * Math.Sin(s / R), t, R - R * Math.Cos(s / R));
+            var m = TestMeshes.Grid(F, -100, 150, 0, 100, 100, 40, noise: 0.002);
+            var set = new RegionSet(m);
+            var r = set.AddRegion();
+            var picks = new[] { (20.0, 20.0), (60.0, 80.0), (100.0, 30.0), (140.0, 70.0), (40.0, 50.0), (120.0, 90.0) };
+            set.BeginStroke();
+            foreach (var (s, t) in picks)
+            {
+                int seed = m.Bvh.Nearest(F(s, t), out var hit);
+                PaintTools.Brush(set, seed, hit, 4, r.Id);
+            }
+            set.EndStroke();
+            Assert.True(r.TriangleCount < 150);
+
+            var cands = SelectionOptimizer.Explore(m, (int[])set.Owners.Clone(), r.Id, new FitOptions { Tolerance = 0.02 });
+            var best = cands[0];
+            Assert.True(best.Valid);
+            Assert.Equal(SurfaceKind.Cylinder, best.Fit.Surface.Kind);
+            Assert.InRange(((CylinderSurface)best.Fit.Surface).Radius, R - 0.2, R + 0.2);
+            var cylTris = Enumerable.Range(0, m.TriangleCount).Count(t => m.Centroids[t].X > 1);
+            Assert.True(best.Triangles.Length > 0.9 * cylTris, $"{best.Triangles.Length} of {cylTris}");
+            Assert.True(best.Triangles.All(t => m.Centroids[t].X > -3), "leaked onto the plane");
+            Assert.Equal(r.TriangleCount, set.TriangleListOf(r.Id).Count); // snapshot only, region untouched
+        }
+
+        [Fact]
+        public void CleanUp_RemovesSpecksFillsHolesAndSmoothsEdges()
+        {
+            var m = TestMeshes.Grid((s, t) => new Vec3(s, t, 0), 0, 100, 0, 100, 50, 50);
+            var set = new RegionSet(m);
+            var r = set.AddRegion();
+            set.BeginStroke();
+            for (int t = 0; t < m.TriangleCount; t++)
+            {
+                var c = m.Centroids[t];
+                bool main = c.X > 20 && c.X < 70 && c.Y > 20 && c.Y < 70 && !(Math.Abs(c.X - 45) < 2 && Math.Abs(c.Y - 45) < 2);
+                bool speck = Math.Abs(c.X - 90) < 1.5 && Math.Abs(c.Y - 90) < 1.5;
+                if (main || speck) set.Assign(t, r.Id);
+            }
+            // A jagged single triangle sticking out of the edge.
+            int spike = m.Bvh.Nearest(new Vec3(71, 50.5, 0), out _);
+            set.Assign(spike, r.Id);
+            set.EndStroke();
+
+            set.BeginStroke("Clean up");
+            PaintTools.CleanUp(set, r.Id);
+            set.EndStroke();
+            var tris = set.TriangleListOf(r.Id);
+            Assert.DoesNotContain(tris, t => m.Centroids[t].X > 85);                    // speck removed
+            Assert.Contains(m.Bvh.Nearest(new Vec3(45, 45, 0), out _), tris);           // hole filled
+            Assert.DoesNotContain(spike, tris);                                         // spike smoothed away
+        }
     }
 }

@@ -18,6 +18,14 @@ namespace MeshFit.Core.Fitting
         /// <summary>Points used by the analytic fitters (the region is subsampled above this).</summary>
         public int MaxPoints { get; set; } = 20000;
         public FreeformOptions Freeform { get; set; } = new FreeformOptions();
+
+        /// <summary>Independent copy (fitters may adjust options, so background work uses its own).</summary>
+        public FitOptions Clone()
+        {
+            var c = (FitOptions)MemberwiseClone();
+            c.Freeform = Freeform.Clone();
+            return c;
+        }
     }
 
     public sealed class FitStatistics

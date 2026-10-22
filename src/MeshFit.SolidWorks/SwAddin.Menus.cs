@@ -45,9 +45,12 @@ namespace MeshFit.SolidWorks
             ("\"Brush smaller@\"", Cmd.BrushSmaller, "Decrease the brush diameter (or Ctrl/Shift + wheel down)", false),
             ("Grow to fillets", Cmd.GrowToFillets, "Grow the region up to the adjacent fillets / feature lines", true),
             ("\"Trim fillets@\"", Cmd.TrimFillets, "Remove the part of the region that runs into adjacent fillets", true),
+            ("Analyze fillet", Cmd.AnalyzeFillet, "Measure the radius along the selected fillet band (constant or variable)", false),
+            ("\"Boundary to 3D sketch@\"", Cmd.BoundaryToSketch, "Create a 3D sketch of the active region's boundary curves", false),
             ("Optimize selection", Cmd.Optimize, "Try growing/shrinking/trimming the selection for the best fit", true),
             ("Fit + grow", Cmd.FitAndGrow, "Fit the active region and grow it over its surface", true),
             ("\"Create surface@\"", Cmd.CreateSurface, "Create the SOLIDWORKS surface for the active region", false),
+            ("Accuracy analyzer", Cmd.AnalyzeCad, "Colour the scan by its distance to the bodies in the part", false),
             ("Hide MeshFit surfaces", Cmd.HideSurfaces, "Hide all surfaces created by MeshFit", false),
             ("Show MeshFit surfaces", Cmd.ShowSurfaces, "Show all surfaces created by MeshFit", false),
         };
@@ -128,6 +131,8 @@ namespace MeshFit.SolidWorks
                 case Cmd.ClearRegion:
                 case Cmd.CleanUp:
                 case Cmd.Optimize:
+                case Cmd.AnalyzeFillet:
+                case Cmd.BoundaryToSketch:
                     return Session.ActiveRegion?.TriangleCount > 0 ? 1 : 0;
                 default: return 1;
             }
@@ -215,6 +220,9 @@ namespace MeshFit.SolidWorks
         public void OnMenuToolPick() => Menu(Cmd.ToolPick);
         public void OnMenuToolFillet() => Menu(Cmd.ToolFillet);
         public void OnMenuGrowToFillets() => Menu(Cmd.GrowToFillets);
+        public void OnMenuAnalyzeFillet() => Menu(Cmd.AnalyzeFillet);
+        public void OnMenuBoundaryToSketch() => Menu(Cmd.BoundaryToSketch);
+        public void OnMenuAnalyzeCad() => Menu(Cmd.AnalyzeCad);
         public void OnMenuTrimFillets() => Menu(Cmd.TrimFillets);
         public void OnMenuToolOff() => Menu(Cmd.ToolOff);
         public void OnMenuModeAdd() => Menu(Cmd.ModeAdd);
@@ -241,6 +249,9 @@ namespace MeshFit.SolidWorks
         public int OnMenuEnableToolPick() => Enable(Cmd.ToolPick);
         public int OnMenuEnableToolFillet() => Enable(Cmd.ToolFillet);
         public int OnMenuEnableGrowToFillets() => Enable(Cmd.GrowToFillets);
+        public int OnMenuEnableAnalyzeFillet() => Enable(Cmd.AnalyzeFillet);
+        public int OnMenuEnableBoundaryToSketch() => Enable(Cmd.BoundaryToSketch);
+        public int OnMenuEnableAnalyzeCad() => Enable(Cmd.AnalyzeCad);
         public int OnMenuEnableTrimFillets() => Enable(Cmd.TrimFillets);
         public int OnMenuEnableToolOff() => Enable(Cmd.ToolOff);
         public int OnMenuEnableModeAdd() => Enable(Cmd.ModeAdd);

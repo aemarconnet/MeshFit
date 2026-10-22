@@ -5,6 +5,7 @@ namespace MeshFit.SolidWorks
     {
         ToolBrush, ToolSmartFill, ToolFillShell, ToolFillet, ToolPick, ToolOff,
         GrowToFillets, TrimFillets, ToggleCurvatureMap,
+        BoundaryToSketch, AnalyzeFillet, FilletToSketch, AnalyzeCad, ToggleZebra,
         ModeAdd, ModeRemove, ToggleMode,
         Undo, Redo,
         NewRegion, FillIslands, GrowRing, ShrinkRing, ClearRegion, CleanUp, Optimize, ApplySuggestion,

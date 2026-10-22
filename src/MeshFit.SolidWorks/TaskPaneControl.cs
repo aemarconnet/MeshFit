@@ -30,7 +30,10 @@ namespace MeshFit.SolidWorks
         private readonly Dictionary<PaintTool, CheckBox> _toolButtons = new Dictionary<PaintTool, CheckBox>();
         private CheckBox _addMode, _removeMode;
         private NumericUpDown _brushDiameter, _smartAngle, _blendRadius, _featureScale;
-        private CheckBox _stopAtFillets, _showCurvature, _suggestOn;
+        private CheckBox _stopAtFillets, _showCurvature, _suggestOn, _showCad;
+        private NumericUpDown _cornerAngle, _cadMaxDist;
+        private TextBox _analysisText;
+        private Button _filletSketch;
         private Label _suggestText;
         private Button _suggestApply, _suggestDismiss;
         private List<SelectionCandidate> _suggestion;
@@ -219,6 +222,37 @@ namespace MeshFit.SolidWorks
             gf.Add(_showCurvature);
             root.Controls.Add(gf.Box);
 
+            // Curves & fillet measurement
+            var gc = Group("Curves & fillet measurement");
+            _cornerAngle = Num(5, 180, 50, 0, "Boundary curves are split into separate splines where they turn sharper than this angle (degrees)");
+            gc.Add(Row(Btn("Boundary → 3D sketch", () => Execute(Cmd.BoundaryToSketch),
+                           "Create a 3D sketch with smooth splines along the active region's boundary (trim lines, fillet tangent lines)"),
+                       Lbl("split at °"), _cornerAngle));
+            _filletSketch = Btn("Fillet curves → 3D sketch", () => Execute(Cmd.FilletToSketch),
+                "Create a 3D sketch with the measured fillet's spine (ball centre path) and both tangent lines");
+            _filletSketch.Enabled = false;
+            gc.Add(Row(Btn("Analyze fillet", () => Execute(Cmd.AnalyzeFillet),
+                           "Measure the active region as a fillet band: cross-section circles along its length give a constant or variable radius"),
+                       _filletSketch));
+            _analysisText = new TextBox { Multiline = true, ReadOnly = true, Width = W - 16, Height = 80, ScrollBars = ScrollBars.Vertical };
+            _tips.SetToolTip(_analysisText, "Fillet measurement and accuracy analyzer results (mm)");
+            gc.Add(_analysisText);
+            root.Controls.Add(gc.Box);
+
+            // Accuracy analyzer
+            var ga = Group("Accuracy analyzer (CAD vs scan)");
+            _cadMaxDist = Num(0.01m, 1000, 1.0m, 2, "Scan farther than this (mm) from every body counts as 'not modelled' (grey) and is left out of the statistics");
+            ga.Add(Row(Btn("Analyze bodies", () => Execute(Cmd.AnalyzeCad),
+                           "Compare every visible surface/solid body in the part with the scan; the scan is coloured by deviation (legend uses the fit tolerance)"),
+                       Lbl("ignore > mm"), _cadMaxDist));
+            _showCad = Check("Show CAD deviation", false, v => { S.ShowCadDeviation = v; UpdateLegendVisibility(); S.RaiseChanged(); },
+                "Colour the scan by its distance to the CAD bodies (blue below, red above, magenta out of tolerance, grey not modelled)");
+            ga.Add(Row(_showCad,
+                       Btn("Zebra stripes", () => Execute(Cmd.ToggleZebra),
+                           "Toggle SOLIDWORKS zebra stripes to judge surface continuity"),
+                       Btn("Curvature", () => _addin.ToggleSwCurvature(), "Toggle SOLIDWORKS curvature display on the bodies")));
+            root.Controls.Add(ga.Box);
+
             // 3. Fit
             var g3 = Group("Fit");
             var typeRow = Row();
@@ -251,7 +285,7 @@ namespace MeshFit.SolidWorks
             g3.Add(Row(fitGrow, Btn("Fit only", () => Execute(Cmd.Fit), "Fit without growing"),
                        Btn("Fit all", () => FitRegions(All()), "Fit every painted region")));
             _showPreview = Check("Preview surface", true, v => { S.ShowPreview = v; S.RaiseChanged(); }, "Draw iso-lines of the fitted surfaces");
-            _showDeviation = Check("Deviation map", false, v => { S.ShowDeviation = v; _legend.Visible = v; _hoverReadout.Visible = v; S.RaiseChanged(); },
+            _showDeviation = Check("Deviation map", false, v => { S.ShowDeviation = v; UpdateLegendVisibility(); S.RaiseChanged(); },
                 "Colour fitted regions by their distance to the surface");
             g3.Add(Row(_showPreview, _showDeviation));
             _legend = new DeviationLegend(() => (double)_tolerance.Value) { Width = W - 20, Height = 34, Visible = false };
@@ -459,6 +493,31 @@ namespace MeshFit.SolidWorks
                     case Cmd.TrimFillets:
                         if (NeedRegion()) SetStatus($"Removed {S.TrimFillets(S.ActiveRegion):N0} triangles running into fillets.");
                         break;
+                    case Cmd.BoundaryToSketch:
+                        if (NeedRegion()) SetStatus("Created " + _addin.RegionBoundaryToSketch(S.ActiveRegion, (double)_cornerAngle.Value));
+                        break;
+                    case Cmd.AnalyzeFillet:
+                        if (!NeedRegion()) return;
+                        var fa = S.AnalyzeFillet(S.ActiveRegion);
+                        _analysisText.Text = $"{S.ActiveRegion.Name}:{Environment.NewLine}{fa.Report(1000, "mm")}";
+                        _filletSketch.Enabled = fa.Stations.Count >= 2;
+                        SetStatus(fa.IsConstant ? $"Constant fillet R {fa.MeanRadius * 1000:0.##} mm." : $"Variable fillet R {fa.MinRadius * 1000:0.##} → {fa.MaxRadius * 1000:0.##} mm.");
+                        break;
+                    case Cmd.FilletToSketch:
+                        SetStatus("Created " + _addin.FilletToSketch(S.LastFilletRegion, S.LastFillet));
+                        break;
+                    case Cmd.AnalyzeCad:
+                        ApplyFitSettings();
+                        Run(() =>
+                        {
+                            var report = _addin.AnalyzeCad((double)_cadMaxDist.Value / 1000);
+                            _analysisText.Text = report;
+                            _showCad.Checked = true;
+                            UpdateLegendVisibility();
+                            return "Accuracy analysis done — hover over the scan to read deviations.";
+                        });
+                        break;
+                    case Cmd.ToggleZebra: SetStatus(_addin.ToggleZebra() ? "Zebra stripes on." : "Zebra stripes off."); break;
                     case Cmd.ToggleCurvatureMap: _showCurvature.Checked = !_showCurvature.Checked; break;
                     case Cmd.BrushBigger: S.BrushRadius *= 1.25; RefreshAll(); _addin.Redraw(); break;
                     case Cmd.BrushSmaller: S.BrushRadius /= 1.25; RefreshAll(); _addin.Redraw(); break;
@@ -624,9 +683,24 @@ namespace MeshFit.SolidWorks
 
         private static decimal Clamp(decimal v, NumericUpDown n) => Math.Max(n.Minimum, Math.Min(n.Maximum, Math.Round(v, n.DecimalPlaces)));
 
+        private void UpdateLegendVisibility()
+        {
+            bool v = S.ShowDeviation || (S.ShowCadDeviation && S.CadResult != null);
+            _legend.Visible = v;
+            _hoverReadout.Visible = v;
+        }
+
         private void UpdateHoverReadout()
         {
-            if (!S.ShowDeviation || IsDisposed) return;
+            if (IsDisposed) return;
+            if (S.ShowCadDeviation && S.CadResult != null)
+            {
+                _hoverReadout.Text = S.HoverCadDeviation.HasValue
+                    ? $"At cursor: {S.HoverCadDeviation.Value * 1000:+0.000;-0.000;0.000} mm from the CAD bodies"
+                    : "At cursor: not modelled (no body within the limit)";
+                return;
+            }
+            if (!S.ShowDeviation) return;
             _hoverReadout.Text = S.HoverDeviation.HasValue
                 ? $"At cursor: {S.HoverDeviation.Value * 1000:+0.000;-0.000;0.000} mm from '{S.HoverRegion?.Name}' ({S.HoverRegion?.Fit.Surface.Kind})"
                 : "At cursor: not on a fitted region";

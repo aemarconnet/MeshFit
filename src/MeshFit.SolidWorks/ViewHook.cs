@@ -133,7 +133,7 @@ namespace MeshFit.SolidWorks
         {
             if (!_session.HasMesh || _session.Busy) return 0;
             // Without a tool, only track the cursor when the deviation readout needs it.
-            if (_session.Tool == PaintTool.None && !_session.ShowDeviation) return 0;
+            if (_session.Tool == PaintTool.None && !_session.ShowDeviation && !_session.ShowCadDeviation) return 0;
             try
             {
                 if ((wParam & MK_LBUTTON) == 0 && _session.IsStroking) _session.EndStroke();

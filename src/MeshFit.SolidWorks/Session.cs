@@ -47,6 +47,15 @@ namespace MeshFit.SolidWorks
         /// <summary>Smart fill and growing stop where an adjacent fillet starts.</summary>
         public bool StopAtFillets { get; set; } = true;
         public bool ShowCurvature { get; set; }
+
+        // ---- fillet analysis / accuracy analyzer
+        public MeshFit.Core.Analysis.FilletAnalysis LastFillet { get; set; }
+        public Region LastFilletRegion { get; set; }
+        /// <summary>Result of the last CAD-vs-scan comparison (per scan vertex).</summary>
+        public MeshFit.Core.Analysis.CadComparison CadResult { get; set; }
+        public bool ShowCadDeviation { get; set; }
+        /// <summary>CAD deviation at the cursor (m), when the accuracy view is on.</summary>
+        public double? HoverCadDeviation { get; private set; }
         private bool UseFeatures => StopAtFillets && Curvature != null;
         public double ExtentMargin { get; set; } = 0.1;
 
@@ -91,6 +100,9 @@ namespace MeshFit.SolidWorks
         {
             Mesh = mesh;
             Curvature = null;
+            CadResult = null;
+            ShowCadDeviation = false;
+            LastFillet = null;
             Regions = regions ?? new RegionSet(mesh);
             Regions.Changed += (s, e) => RaiseChanged();
             ActiveRegion = Regions.Regions.FirstOrDefault() ?? Regions.AddRegion();
@@ -123,10 +135,17 @@ namespace MeshFit.SolidWorks
             HasHover = t >= 0;
             HoverDeviation = null;
             HoverRegion = null;
+            HoverCadDeviation = null;
             if (HasHover)
             {
                 HoverPoint = hit;
                 HoverNormal = Mesh.FaceNormals[t];
+                if (CadResult != null)
+                {
+                    double sum = 0; int n = 0;
+                    for (int k = 0; k < 3; k++) { float d = CadResult.Deviation[Mesh.V(t, k)]; if (!float.IsNaN(d)) { sum += d; n++; } }
+                    if (n > 0) HoverCadDeviation = sum / n;
+                }
                 var r = Regions.Find(Regions.OwnerOf(t));
                 if (r?.Fit?.Surface != null)
                 {
@@ -404,6 +423,15 @@ namespace MeshFit.SolidWorks
             Regions.EndStroke();
             if (n > 0) r.Fit = null;
             return n;
+        }
+
+        public MeshFit.Core.Analysis.FilletAnalysis AnalyzeFillet(Region r)
+        {
+            var tris = Regions.TriangleListOf(r.Id);
+            if (tris.Count < 20) throw new InvalidOperationException($"Select the fillet band into '{r.Name}' first (Fillet tool).");
+            LastFillet = MeshFit.Core.Analysis.FilletAnalysis.Analyze(Mesh, tris);
+            LastFilletRegion = r;
+            return LastFillet;
         }
 
         private void RequireCurvature()

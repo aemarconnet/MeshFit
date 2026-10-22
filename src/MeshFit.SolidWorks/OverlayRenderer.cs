@@ -33,6 +33,9 @@ namespace MeshFit.SolidWorks
 
         public void Invalidate() => _dirty = true;
 
+        /// <summary>The accuracy analyzer result replaces the paint display while it is shown.</summary>
+        private bool CadView => _s.ShowCadDeviation && _s.CadResult != null;
+
         public void Draw(double pixelSize)
         {
             if (!_s.HasMesh) return;
@@ -53,7 +56,7 @@ namespace MeshFit.SolidWorks
 
                 // Painted regions sit slightly in front of the mesh (and of a SOLIDWORKS mesh body).
                 Gl.glPolygonOffset(-1f, -2f);
-                if (_s.ShowMesh || _s.ShowCurvature) DrawArrays(Gl.GL_TRIANGLES, _meshV, _meshC);
+                if (_s.ShowMesh || _s.ShowCurvature || CadView) DrawArrays(Gl.GL_TRIANGLES, _meshV, _meshC);
                 Gl.glPolygonOffset(-2f, -4f);
                 DrawArrays(Gl.GL_TRIANGLES, _paintV, _paintC);
 
@@ -146,8 +149,9 @@ namespace MeshFit.SolidWorks
 
             // Whole mesh in neutral grey, shaded by a fixed head light on the normal so it reads as 3D.
             // The mesh layer (grey, or the curvature map) only changes with the mesh or the display mode.
-            var key = (m, _s.ShowCurvature ? _s.Curvature : null, _s.ShowCurvature ? _s.BlendRadius : 0);
-            if ((_s.ShowMesh || _s.ShowCurvature) && !Equals(_meshBuiltFor, key))
+            var key = (m, _s.ShowCurvature ? _s.Curvature : null, _s.ShowCurvature ? _s.BlendRadius : 0,
+                       CadView ? _s.CadResult : null, CadView ? _s.FitOptions.Tolerance : 0);
+            if ((_s.ShowMesh || _s.ShowCurvature || CadView) && !Equals(_meshBuiltFor, key))
             {
                 _meshBuiltFor = key;
                 _meshV = new float[nt * 9]; _meshC = new byte[nt * 12];
@@ -158,6 +162,18 @@ namespace MeshFit.SolidWorks
                     PutTri(_meshV, t, m.P(t, 0), m.P(t, 1), m.P(t, 2));
                     double shade = 0.45 + 0.45 * Math.Abs(m.FaceNormals[t].Dot(light));
                     byte r, g, b;
+                    if (CadView)
+                    {
+                        // Per-vertex colours from the CAD comparison (grey = not modelled).
+                        for (int k2 = 0; k2 < 3; k2++)
+                        {
+                            float d = _s.CadResult.Deviation[m.V(t, k2)];
+                            if (float.IsNaN(d)) { byte gr = (byte)(150 * shade); PutColor(_meshC, t * 3 + k2, gr, gr, gr, 255); continue; }
+                            DeviationColor(d / _s.FitOptions.Tolerance, out byte cr, out byte cg, out byte cb);
+                            PutColor(_meshC, t * 3 + k2, cr, cg, cb, 255);
+                        }
+                        continue;
+                    }
                     if (curv != null)
                     {
                         // 0 → grey, 1/blend radius → orange, ≥ 2/blend radius → red.
@@ -178,14 +194,14 @@ namespace MeshFit.SolidWorks
             bool devMap = _s.ShowDeviation;
             double tol = _s.FitOptions.Tolerance;
             int count = 0;
-            if (_s.ShowRegions) for (int t = 0; t < nt; t++) if (set.OwnerOf(t) != RegionSet.None) count++;
+            if (_s.ShowRegions && !CadView) for (int t = 0; t < nt; t++) if (set.OwnerOf(t) != RegionSet.None) count++;
             _paintV = new float[count * 9];
             _paintC = new byte[count * 12];
             int i = 0;
             for (int t = 0; t < nt; t++)
             {
                 int o = set.OwnerOf(t);
-                if (!_s.ShowRegions || o == RegionSet.None || !regionById.TryGetValue(o, out var reg)) continue;
+                if (!_s.ShowRegions || CadView || o == RegionSet.None || !regionById.TryGetValue(o, out var reg)) continue;
                 PutTri(_paintV, i, m.P(t, 0), m.P(t, 1), m.P(t, 2));
                 for (int k = 0; k < 3; k++)
                 {

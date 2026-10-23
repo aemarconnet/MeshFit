@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MeshFit.Core.Fitting;
 using MeshFit.Core.Geometry;
 using MeshFit.Core.Mesh;
@@ -303,6 +304,84 @@ namespace MeshFit.Core.Selection
                 created.Add(r);
             }
             set.EndStroke();
+            return created;
+        }
+
+        /// <summary>
+        /// Region-group segmentation ("Auto Segment"): splits the unassigned triangles at creases sharper than
+        /// <paramref name="maxEdgeAngleDeg"/> and, when <paramref name="curvature"/> is known, at blends: triangles
+        /// curved tighter than <paramref name="blendRadius"/> form their own (fillet) regions, so a face and the
+        /// fillets running into it become separate regions. Patches below <paramref name="minTriangles"/> are
+        /// absorbed into the neighbouring region they touch most instead of being left unpainted.
+        /// </summary>
+        public static List<Region> AutoSegment(RegionSet set, double maxEdgeAngleDeg, int minTriangles,
+                                               Curvature curvature, double blendRadius, bool absorbSmall = true,
+                                               System.Threading.CancellationToken ct = default)
+        {
+            var m = set.Mesh;
+            double cosEdge = Math.Cos(maxEdgeAngleDeg * Math.PI / 180);
+            double kBlend = curvature != null && blendRadius > 0 ? 1.0 / blendRadius : double.MaxValue;
+            int Class(int t) => curvature != null && curvature.KMax[t] > kBlend ? 1 : 0;
+            var label = new int[m.TriangleCount];
+            var small = new List<int>();
+            var created = new List<Region>();
+            set.BeginStroke("Auto segment");
+            try
+            {
+                for (int seed = 0; seed < m.TriangleCount; seed++)
+                {
+                    if ((seed & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
+                    if (label[seed] != 0 || set.OwnerOf(seed) != RegionSet.None) continue;
+                    int cls = Class(seed);
+                    var patch = new List<int> { seed };
+                    label[seed] = 1;
+                    for (int i = 0; i < patch.Count; i++)
+                    {
+                        int t = patch[i];
+                        for (int k = 0; k < 3; k++)
+                        {
+                            int nb = m.Neighbors[t * 3 + k];
+                            if (nb < 0 || label[nb] != 0 || set.OwnerOf(nb) != RegionSet.None) continue;
+                            if (Class(nb) != cls || m.FaceNormals[t].Dot(m.FaceNormals[nb]) < cosEdge) continue;
+                            label[nb] = 1;
+                            patch.Add(nb);
+                        }
+                    }
+                    if (patch.Count < minTriangles) { small.AddRange(patch); continue; }
+                    var r = set.AddRegion();
+                    foreach (int t in patch) set.Assign(t, r.Id);
+                    created.Add(r);
+                }
+
+                if (absorbSmall && created.Count > 0)
+                {
+                    // Grow the regions into the small leftovers, one ring per pass, by majority of neighbours.
+                    var pending = new HashSet<int>(small);
+                    var votes = new Dictionary<int, int>();
+                    bool changed = true;
+                    while (pending.Count > 0 && changed)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        changed = false;
+                        var assign = new List<(int t, int r)>();
+                        foreach (int t in pending)
+                        {
+                            votes.Clear();
+                            for (int k = 0; k < 3; k++)
+                            {
+                                int nb = m.Neighbors[t * 3 + k];
+                                if (nb < 0) continue;
+                                int o = set.OwnerOf(nb);
+                                if (o == RegionSet.None) continue;
+                                votes[o] = votes.TryGetValue(o, out int c) ? c + 1 : 1;
+                            }
+                            if (votes.Count > 0) assign.Add((t, votes.OrderByDescending(v => v.Value).First().Key));
+                        }
+                        foreach (var (t, r) in assign) { set.Assign(t, r); pending.Remove(t); changed = true; }
+                    }
+                }
+            }
+            finally { set.EndStroke(); }
             return created;
         }
 

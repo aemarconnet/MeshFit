@@ -8,14 +8,14 @@ using MeshFit.Core.Selection;
 
 namespace MeshFit.SolidWorks
 {
-    internal enum PaintTool { None, Brush, SmartFill, FillConnected, Fillet, PickRegion }
+    internal enum PaintTool { None, Brush, SmartFill, FillConnected, Fillet, PickRegion, Rectangle, Freehand }
 
     /// <summary>
     /// All state of one reverse engineering session (mesh, regions, tool settings) plus the painting
     /// logic driven by view mouse events. Independent of WinForms; SOLIDWORKS only supplies pick lines.
     /// Model units are metres (SOLIDWORKS API units).
     /// </summary>
-    internal sealed class Session
+    internal sealed partial class Session
     {
         public TriMesh Mesh { get; private set; }
         public RegionSet Regions { get; private set; }
@@ -251,9 +251,12 @@ namespace MeshFit.SolidWorks
             if (Tool == PaintTool.PickRegion)
             {
                 var r = t >= 0 ? Regions.Find(Regions.OwnerOf(t)) : null;
+                // An open wizard takes the click: it adds or removes the region from its selection.
+                if (r != null && PickHandler != null && PickHandler(r)) return false;
                 if (r != null) { ActiveRegion = r; RaiseChanged(); Say("Active region: " + r.Name); }
                 return false;
             }
+            if (Tool == PaintTool.Rectangle || Tool == PaintTool.Freehand) return false;
             EnsureRegion();
             _strokeRemove = RemoveMode ^ invert;
             _stroking = true;
@@ -275,7 +278,8 @@ namespace MeshFit.SolidWorks
 
         public static string ToolName(PaintTool t) =>
             t == PaintTool.SmartFill ? "smart fill" : t == PaintTool.FillConnected ? "fill shell" :
-            t == PaintTool.Fillet ? "fillet select" : t.ToString().ToLowerInvariant();
+            t == PaintTool.Fillet ? "fillet select" : t == PaintTool.Freehand ? "freehand selection" :
+            t == PaintTool.Rectangle ? "rectangle selection" : t.ToString().ToLowerInvariant();
 
         public void EndStroke()
         {

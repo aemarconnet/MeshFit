@@ -38,6 +38,27 @@ namespace MeshFit.Core.Tests
         }
 
         [Fact]
+        public void AutoSegment_WithCurvature_SplitsFloorFilletAndWall()
+        {
+            var m = Bracket();
+            var c = Curvature.Compute(m, Curvature.DefaultScale(m));
+            var plain = new RegionSet(m);
+            Assert.Single(PaintTools.AutoSegment(plain, 20, 50));          // the angle test alone: one smooth patch
+
+            var set = new RegionSet(m);
+            var regions = PaintTools.AutoSegment(set, 20, 50, c, blendRadius: 10);
+            Assert.Equal(3, regions.Count);
+            Assert.All(Enumerable.Range(0, m.TriangleCount), t => Assert.NotEqual(RegionSet.None, set.OwnerOf(t)));
+            var byFloor = regions.OrderBy(r => set.TriangleListOf(r.Id).Average(t => m.Centroids[t].Z)).ToList();
+            var floor = set.TriangleListOf(byFloor[0].Id);
+            var fillet = set.TriangleListOf(byFloor[1].Id);
+            var wall = set.TriangleListOf(byFloor[2].Id);
+            Assert.All(floor, t => Assert.True(m.Centroids[t].X < 0.2 && Math.Abs(m.Centroids[t].Z) < 0.02, m.Centroids[t].ToString()));
+            Assert.InRange(c.MedianKMax(fillet), 0.15, 0.25);
+            Assert.All(wall, t => Assert.True(m.Centroids[t].X > R - 0.8, m.Centroids[t].ToString()));
+        }
+
+        [Fact]
         public void SmartFill_LeaksOverTangentFillet_UnlessStoppedByCurvature()
         {
             var m = Bracket();

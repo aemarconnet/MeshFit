@@ -19,59 +19,48 @@ namespace MeshFit.SolidWorks
         // (command, button text, tooltip)
         private static readonly (Cmd cmd, string text, string tip)[] RibbonCommands =
         {
-            (Cmd.ReverseEngineer, "Reverse Engineer", "Paint a feature on the mesh, fit it and create the surface (PropertyManager)"),
-            (Cmd.LoadMesh, "Load Mesh", "Load an STL / OBJ / PLY scan"),
+            (Cmd.LoadMesh, "Import Mesh", "Import an STL / OBJ / PLY scan"),
             (Cmd.UseBodies, "Mesh Body", "Use the selected mesh body (or all bodies of the part) as the scan"),
-            (Cmd.PositionMesh, "Position Mesh", "Place the scan relative to the part origin: numeric, mates or automatic"),
-            (Cmd.ToolSmartFill, "Smart Fill", "Click or drag: fill smooth areas up to sharp edges (and fillets when 'Stop at fillets' is on)"),
-            (Cmd.ToolBrush, "Brush", "Paint inside the brush circle. Ctrl+click paints a straight line; Ctrl/Shift + wheel resizes"),
-            (Cmd.ToolFillet, "Fillet", "Click a fillet or blend to select the whole band"),
-            (Cmd.ToolFillShell, "Shell", "Click to fill a whole connected piece of mesh"),
-            (Cmd.ToolPick, "Pick Region", "Click painted triangles to make their region active"),
-            (Cmd.ToolOff, "Paint Off", "Stop painting; SOLIDWORKS works normally (Esc)"),
-            (Cmd.ToggleMode, "Remove", "Pressed: the tools unselect triangles instead of adding them (Shift = temporary)"),
-            (Cmd.ClearRegion, "Clear Selection", "Unselect every triangle of the active region (Delete key in the view; Undo restores it)"),
-            (Cmd.ShowRegions, "Regions", "Show the region list (rename, recolour, merge, delete)"),
-            (Cmd.NewRegion, "New Region", "Start a new region for the next feature"),
-            (Cmd.FillIslands, "Fill Islands", "Fill unpainted islands enclosed by the active region"),
-            (Cmd.CleanUp, "Clean Up", "Remove specks, fill holes and smooth the jagged brush edge"),
-            (Cmd.Optimize, "Optimize Selection", "Try growing / shrinking / trimming the active region for the best fit (Esc cancels)"),
-            (Cmd.TypeAuto, "Auto", "Fit the simplest surface type within tolerance"),
-            (Cmd.TypePlane, "Plane", "Fit the active region as a plane"),
-            (Cmd.TypeCylinder, "Cylinder", "Fit the active region as a cylinder"),
-            (Cmd.TypeCone, "Cone", "Fit the active region as a cone"),
-            (Cmd.TypeSphere, "Sphere", "Fit the active region as a sphere"),
-            (Cmd.TypeTorus, "Torus", "Fit the active region as a torus"),
-            (Cmd.TypeFreeform, "Freeform", "Fit the active region as a B-spline surface"),
-            (Cmd.FitAndGrow, "Fit + Grow", "Fit the active region and grow it over its surface (Esc cancels)"),
-            (Cmd.Fit, "Fit Only", "Fit the active region without growing it"),
-            (Cmd.FitAll, "Fit All", "Fit every painted region (Esc cancels)"),
-            (Cmd.CreateSurface, "Surface", "Create the fitted surface: true plane / cylinder / cone / sphere / torus, or B-spline"),
-            (Cmd.CreateExtrude, "Extruded Surface", "Editable sketch of lines and arcs plus an extruded surface"),
-            (Cmd.CreateRevolve, "Revolved Surface", "Editable sketch of lines and arcs plus a revolved surface"),
-            (Cmd.NextFeature, "Next Feature", "Hide the finished surface and start painting the next feature"),
+            (Cmd.UnloadMesh, "Unload Mesh", "Remove the scan from MeshFit"),
+            (Cmd.PositionMesh, "Align Scan", "Place the scan relative to the part origin: numeric, mates (planes / axes / points) or automatic"),
+            (Cmd.RegionGroups, "Region Groups", "Region Groups mode: Auto Segment the scan into regions, then fix them. ✔ keeps, ✖ undoes"),
+            (Cmd.ToolBrush, "Paint Brush", "Paint inside the circle. Ctrl+click = straight stroke; Ctrl/Shift+wheel = size"),
+            (Cmd.ToolSmartFill, "Flood Fill", "Click or drag: fill the smooth area up to creases (and fillets with Stop at fillets)"),
+            (Cmd.ToolRectangle, "Rectangle", "Drag a box: select the visible triangles inside it"),
+            (Cmd.ToolFreehand, "Freehand", "Drag an outline: select the visible triangles inside it"),
+            (Cmd.FitAndGrow, "Extend To Similar", "Grow the active region over every connected triangle on the same surface (Esc cancels)"),
+            (Cmd.ToolFillet, "Fillet Band", "Click a fillet or blend to select the whole band"),
+            (Cmd.ToolPick, "Pick Region", "Click a region to make it active (or add it to the open wizard)"),
+            (Cmd.ToggleMode, "Remove", "Pressed: the selection modes unselect instead of select (Shift = temporary)"),
+            (Cmd.ClearRegion, "Clear Selection", "Unselect every triangle of the active region (Delete key)"),
+            (Cmd.ShowRegions, "Region List", "Show the region list (rename, recolour, merge, delete)"),
+            (Cmd.MeshSketch, "Mesh Sketch", "Section the scan with a plane and fit lines and arcs into a SOLIDWORKS sketch (Auto Sketch)"),
+            (Cmd.BoundaryToSketch, "Boundary Curves", "3D sketch of the active region's boundary (trim lines, tangent lines)"),
+            (Cmd.SurfacePrimitives, "Surface Primitives", "Planes, cylinders, cones, spheres and tori from the selected regions"),
+            (Cmd.ExtrusionWizard, "Extrusion Wizard", "Sketch (lines and arcs) and extruded surface from the selected regions"),
+            (Cmd.RevolutionWizard, "Revolution Wizard", "Sketch (lines and arcs) and revolved surface from the selected regions"),
+            (Cmd.MeshFitWizard, "Mesh Fit", "B-spline surface for doubly curved regions"),
+            (Cmd.AnalyzeCad, "Accuracy Analyzer", "Colour the scan by its distance to the bodies in the part"),
+            (Cmd.AnalyzeFillet, "Measure Fillet", "Measure the active region as a constant or variable fillet"),
+            (Cmd.ToggleCurvatureMap, "Curvature Map", "Colour the scan by curvature (fillets and feature lines)"),
+            (Cmd.ToggleZebra, "Zebra", "Toggle zebra stripes"),
             (Cmd.HideSurfaces, "Hide Surfaces", "Hide all surfaces created by MeshFit"),
             (Cmd.ShowSurfaces, "Show Surfaces", "Show all surfaces created by MeshFit"),
-            (Cmd.AnalyzeFillet, "Measure Fillet", "Measure the active region as a constant or variable fillet"),
-            (Cmd.BoundaryToSketch, "Boundary Curves", "3D sketch of the active region's boundary (trim lines, tangent lines)"),
-            (Cmd.AnalyzeCad, "Accuracy", "Colour the scan by its distance to the bodies in the part"),
-            (Cmd.ToggleZebra, "Zebra", "Toggle zebra stripes"),
             (Cmd.ExportIges, "Export IGES", "Write the fitted surfaces to an IGES file"),
-            (Cmd.SaveProject, "Save Project", "Save the painted regions and mesh placement"),
+            (Cmd.SaveProject, "Save Project", "Save the regions and mesh placement"),
             (Cmd.OpenProject, "Open Project", "Reopen a saved MeshFit project"),
             (Cmd.Settings, "Settings", "Tolerances, clean-geometry rules, fillet detection and other options"),
-            (Cmd.UnloadMesh, "Unload Mesh", "Remove the scan from MeshFit"),
         };
 
         private static readonly Cmd[] LargeButtons =
         {
-            Cmd.ReverseEngineer, Cmd.FitAndGrow, Cmd.CreateSurface, Cmd.NextFeature,
+            Cmd.LoadMesh, Cmd.PositionMesh, Cmd.RegionGroups, Cmd.MeshSketch, Cmd.SurfacePrimitives, Cmd.AnalyzeCad,
         };
 
         private static readonly Cmd[] NamedButtons =
         {
-            Cmd.LoadMesh, Cmd.PositionMesh, Cmd.ToolSmartFill, Cmd.ToolBrush, Cmd.ToolFillet,
-            Cmd.ToggleMode, Cmd.ClearRegion, Cmd.ShowRegions, Cmd.CreateExtrude, Cmd.CreateRevolve,
+            Cmd.ToolBrush, Cmd.ToolSmartFill, Cmd.ToolRectangle, Cmd.ToolFreehand, Cmd.FitAndGrow, Cmd.ToolFillet,
+            Cmd.ExtrusionWizard, Cmd.RevolutionWizard, Cmd.MeshFitWizard,
         };
 
         private void AddRibbon(int cookie)
@@ -81,7 +70,7 @@ namespace MeshFit.SolidWorks
             Directory.CreateDirectory(dir);
             var sizes = new[] { 20, 32, 40, 64, 96, 128 };
             var strips = sizes.Select(sz => WriteStrip(dir, sz, RibbonCommands.Select(c => c.cmd).ToArray())).ToArray();
-            var main = sizes.Select(sz => WriteStrip(dir, sz, new[] { Cmd.ReverseEngineer }, "main")).ToArray();
+            var main = sizes.Select(sz => WriteStrip(dir, sz, new[] { Cmd.RegionGroups }, "main")).ToArray();
 
             int err = 0;
             var grp = _cmdMgr.CreateCommandGroup2(RibbonGroupId, RibbonTitle, "MeshFit reverse engineering", "MeshFit", -1, true, ref err);
@@ -103,8 +92,8 @@ namespace MeshFit.SolidWorks
                 var tab = _cmdMgr.GetCommandTab(docType, RibbonTitle);
                 if (tab != null) _cmdMgr.RemoveCommandTab((CommandTab)tab);
                 tab = _cmdMgr.AddCommandTab(docType, RibbonTitle);
-                // Mesh | Select | Fit | Build | Analyze | Files
-                var starts = new[] { Cmd.ReverseEngineer, Cmd.ToolSmartFill, Cmd.TypeAuto, Cmd.CreateSurface, Cmd.AnalyzeFillet, Cmd.ExportIges }
+                // Scan | Align | Regions | Sketch | Model | Analyze | Output (left to right, in the order of the work)
+                var starts = new[] { Cmd.LoadMesh, Cmd.PositionMesh, Cmd.RegionGroups, Cmd.MeshSketch, Cmd.SurfacePrimitives, Cmd.AnalyzeCad, Cmd.HideSurfaces }
                     .Select(c => Array.FindIndex(RibbonCommands, x => x.cmd == c)).Concat(new[] { RibbonCommands.Length }).ToArray();
                 for (int b = 0; b + 1 < starts.Length; b++)
                     AddBox(tab, grp, index, Enumerable.Range(starts[b], starts[b + 1] - starts[b]).ToArray());
@@ -167,7 +156,7 @@ namespace MeshFit.SolidWorks
                 case Cmd.UseBodies:
                 case Cmd.OpenProject:
                 case Cmd.Settings:
-                case Cmd.ReverseEngineer:
+                case Cmd.RegionGroups:
                 case Cmd.ToggleZebra:
                 case Cmd.ShowRegions:
                     return 1;
@@ -181,6 +170,9 @@ namespace MeshFit.SolidWorks
                 case Cmd.ToolFillet: pressed = s.Tool == PaintTool.Fillet; break;
                 case Cmd.ToolFillShell: pressed = s.Tool == PaintTool.FillConnected; break;
                 case Cmd.ToolPick: pressed = s.Tool == PaintTool.PickRegion; break;
+                case Cmd.ToolRectangle: pressed = s.Tool == PaintTool.Rectangle; break;
+                case Cmd.ToolFreehand: pressed = s.Tool == PaintTool.Freehand; break;
+                case Cmd.ToggleCurvatureMap: pressed = s.ShowCurvature; break;
                 case Cmd.ToolOff: pressed = s.Tool == PaintTool.None; break;
                 case Cmd.ToggleMode: pressed = s.RemoveMode; break;
                 default:
@@ -210,66 +202,54 @@ namespace MeshFit.SolidWorks
         }
 
         // ---- ribbon callbacks (SOLIDWORKS calls them by name) ----
-        public void OnMenuReverseEngineer() => Menu(Cmd.ReverseEngineer);
         public void OnMenuLoadMesh() => Menu(Cmd.LoadMesh);
         public void OnMenuUseBodies() => Menu(Cmd.UseBodies);
+        public void OnMenuRegionGroups() => Menu(Cmd.RegionGroups);
+        public void OnMenuToolRectangle() => Menu(Cmd.ToolRectangle);
+        public void OnMenuToolFreehand() => Menu(Cmd.ToolFreehand);
         public void OnMenuToggleMode() => Menu(Cmd.ToggleMode);
-        public void OnMenuTypeAuto() => Menu(Cmd.TypeAuto);
-        public void OnMenuTypePlane() => Menu(Cmd.TypePlane);
-        public void OnMenuTypeCylinder() => Menu(Cmd.TypeCylinder);
-        public void OnMenuTypeCone() => Menu(Cmd.TypeCone);
-        public void OnMenuTypeSphere() => Menu(Cmd.TypeSphere);
-        public void OnMenuTypeTorus() => Menu(Cmd.TypeTorus);
-        public void OnMenuTypeFreeform() => Menu(Cmd.TypeFreeform);
-        public void OnMenuFit() => Menu(Cmd.Fit);
-        public void OnMenuFitAll() => Menu(Cmd.FitAll);
         public void OnMenuShowRegions() => Menu(Cmd.ShowRegions);
+        public void OnMenuMeshSketch() => Menu(Cmd.MeshSketch);
+        public void OnMenuSurfacePrimitives() => Menu(Cmd.SurfacePrimitives);
+        public void OnMenuExtrusionWizard() => Menu(Cmd.ExtrusionWizard);
+        public void OnMenuRevolutionWizard() => Menu(Cmd.RevolutionWizard);
+        public void OnMenuMeshFitWizard() => Menu(Cmd.MeshFitWizard);
+        public void OnMenuToggleCurvatureMap() => Menu(Cmd.ToggleCurvatureMap);
         public void OnMenuToggleZebra() => Menu(Cmd.ToggleZebra);
         public void OnMenuExportIges() => Menu(Cmd.ExportIges);
         public void OnMenuSaveProject() => Menu(Cmd.SaveProject);
         public void OnMenuOpenProject() => Menu(Cmd.OpenProject);
         public void OnMenuSettings() => Menu(Cmd.Settings);
-        public int OnRibbonEnableReverseEngineer() => RibbonEnable(Cmd.ReverseEngineer);
         public int OnRibbonEnableLoadMesh() => RibbonEnable(Cmd.LoadMesh);
         public int OnRibbonEnableUseBodies() => RibbonEnable(Cmd.UseBodies);
+        public int OnRibbonEnableUnloadMesh() => RibbonEnable(Cmd.UnloadMesh);
         public int OnRibbonEnablePositionMesh() => RibbonEnable(Cmd.PositionMesh);
-        public int OnRibbonEnableToolSmartFill() => RibbonEnable(Cmd.ToolSmartFill);
+        public int OnRibbonEnableRegionGroups() => RibbonEnable(Cmd.RegionGroups);
         public int OnRibbonEnableToolBrush() => RibbonEnable(Cmd.ToolBrush);
-        public int OnRibbonEnableToolFillet() => RibbonEnable(Cmd.ToolFillet);
-        public int OnRibbonEnableToolFillShell() => RibbonEnable(Cmd.ToolFillShell);
-        public int OnRibbonEnableToolPick() => RibbonEnable(Cmd.ToolPick);
-        public int OnRibbonEnableToolOff() => RibbonEnable(Cmd.ToolOff);
-        public int OnRibbonEnableToggleMode() => RibbonEnable(Cmd.ToggleMode);
-        public int OnRibbonEnableNewRegion() => RibbonEnable(Cmd.NewRegion);
-        public int OnRibbonEnableFillIslands() => RibbonEnable(Cmd.FillIslands);
-        public int OnRibbonEnableCleanUp() => RibbonEnable(Cmd.CleanUp);
-        public int OnRibbonEnableOptimize() => RibbonEnable(Cmd.Optimize);
-        public int OnRibbonEnableTypeAuto() => RibbonEnable(Cmd.TypeAuto);
-        public int OnRibbonEnableTypePlane() => RibbonEnable(Cmd.TypePlane);
-        public int OnRibbonEnableTypeCylinder() => RibbonEnable(Cmd.TypeCylinder);
-        public int OnRibbonEnableTypeCone() => RibbonEnable(Cmd.TypeCone);
-        public int OnRibbonEnableTypeSphere() => RibbonEnable(Cmd.TypeSphere);
-        public int OnRibbonEnableTypeTorus() => RibbonEnable(Cmd.TypeTorus);
-        public int OnRibbonEnableTypeFreeform() => RibbonEnable(Cmd.TypeFreeform);
+        public int OnRibbonEnableToolSmartFill() => RibbonEnable(Cmd.ToolSmartFill);
+        public int OnRibbonEnableToolRectangle() => RibbonEnable(Cmd.ToolRectangle);
+        public int OnRibbonEnableToolFreehand() => RibbonEnable(Cmd.ToolFreehand);
         public int OnRibbonEnableFitAndGrow() => RibbonEnable(Cmd.FitAndGrow);
-        public int OnRibbonEnableFit() => RibbonEnable(Cmd.Fit);
-        public int OnRibbonEnableFitAll() => RibbonEnable(Cmd.FitAll);
+        public int OnRibbonEnableToolFillet() => RibbonEnable(Cmd.ToolFillet);
+        public int OnRibbonEnableToolPick() => RibbonEnable(Cmd.ToolPick);
+        public int OnRibbonEnableToggleMode() => RibbonEnable(Cmd.ToggleMode);
         public int OnRibbonEnableClearRegion() => RibbonEnable(Cmd.ClearRegion);
         public int OnRibbonEnableShowRegions() => RibbonEnable(Cmd.ShowRegions);
-        public int OnRibbonEnableCreateSurface() => RibbonEnable(Cmd.CreateSurface);
-        public int OnRibbonEnableCreateExtrude() => RibbonEnable(Cmd.CreateExtrude);
-        public int OnRibbonEnableCreateRevolve() => RibbonEnable(Cmd.CreateRevolve);
-        public int OnRibbonEnableNextFeature() => RibbonEnable(Cmd.NextFeature);
+        public int OnRibbonEnableMeshSketch() => RibbonEnable(Cmd.MeshSketch);
+        public int OnRibbonEnableBoundaryToSketch() => RibbonEnable(Cmd.BoundaryToSketch);
+        public int OnRibbonEnableSurfacePrimitives() => RibbonEnable(Cmd.SurfacePrimitives);
+        public int OnRibbonEnableExtrusionWizard() => RibbonEnable(Cmd.ExtrusionWizard);
+        public int OnRibbonEnableRevolutionWizard() => RibbonEnable(Cmd.RevolutionWizard);
+        public int OnRibbonEnableMeshFitWizard() => RibbonEnable(Cmd.MeshFitWizard);
+        public int OnRibbonEnableAnalyzeCad() => RibbonEnable(Cmd.AnalyzeCad);
+        public int OnRibbonEnableAnalyzeFillet() => RibbonEnable(Cmd.AnalyzeFillet);
+        public int OnRibbonEnableToggleCurvatureMap() => RibbonEnable(Cmd.ToggleCurvatureMap);
+        public int OnRibbonEnableToggleZebra() => RibbonEnable(Cmd.ToggleZebra);
         public int OnRibbonEnableHideSurfaces() => RibbonEnable(Cmd.HideSurfaces);
         public int OnRibbonEnableShowSurfaces() => RibbonEnable(Cmd.ShowSurfaces);
-        public int OnRibbonEnableAnalyzeFillet() => RibbonEnable(Cmd.AnalyzeFillet);
-        public int OnRibbonEnableBoundaryToSketch() => RibbonEnable(Cmd.BoundaryToSketch);
-        public int OnRibbonEnableAnalyzeCad() => RibbonEnable(Cmd.AnalyzeCad);
-        public int OnRibbonEnableToggleZebra() => RibbonEnable(Cmd.ToggleZebra);
         public int OnRibbonEnableExportIges() => RibbonEnable(Cmd.ExportIges);
         public int OnRibbonEnableSaveProject() => RibbonEnable(Cmd.SaveProject);
         public int OnRibbonEnableOpenProject() => RibbonEnable(Cmd.OpenProject);
         public int OnRibbonEnableSettings() => RibbonEnable(Cmd.Settings);
-        public int OnRibbonEnableUnloadMesh() => RibbonEnable(Cmd.UnloadMesh);
     }
 }

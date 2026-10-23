@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Windows.Forms;
 using MeshFit.Core.Geometry;
@@ -87,9 +88,21 @@ namespace MeshFit.SolidWorks
 
         // ------------------------------------------------------------------ input handlers
 
+        // Rectangle / Freehand selection being dragged (screen pixels).
+        private List<(double x, double y)> _shape;
+        private bool _shapeRemove;
+
         private int Down(int x, int y, int wParam)
         {
             if (!PaintActive) return 0;
+            if (_session.IsShapeTool)
+            {
+                _shape = new List<(double x, double y)> { (x, y) };
+                _shapeRemove = _session.RemoveMode ^ ((wParam & MK_SHIFT) != 0);
+                UpdateShapeOutline(x, y);
+                Redraw();
+                return 0;
+            }
             try
             {
                 bool shift = (wParam & MK_SHIFT) != 0, ctrl = (wParam & MK_CONTROL) != 0;
@@ -130,6 +143,20 @@ namespace MeshFit.SolidWorks
 
         private int Up()
         {
+            if (_shape != null)
+            {
+                var poly = _session.Tool == PaintTool.Rectangle ? Rectangle(_shape) : _shape;
+                _shape = null;
+                _session.ShapeOutline.Clear();
+                try
+                {
+                    int n = _session.SelectInScreenPolygon(Projector, poly, _shapeRemove);
+                    _session.Say(n == 0 ? "Nothing visible inside the outline." : $"{(_shapeRemove ? "Removed" : "Selected")} {n:N0} triangles.");
+                }
+                catch (Exception ex) { _session.Say("Selection failed: " + ex.Message); }
+                Redraw();
+                return 0;
+            }
             if (!_session.IsStroking) return 0;
             _session.EndStroke();
             Redraw();
@@ -143,6 +170,13 @@ namespace MeshFit.SolidWorks
             if (_session.Tool == PaintTool.None && !_session.ShowDeviation && !_session.ShowCadDeviation) return 0;
             try
             {
+                if (_shape != null)
+                {
+                    if ((wParam & MK_LBUTTON) == 0) { Up(); return 0; }
+                    UpdateShapeOutline(x, y);
+                    ThrottledRedraw();
+                    return 0;
+                }
                 if ((wParam & MK_LBUTTON) == 0 && _session.IsStroking) _session.EndStroke();
                 _session.LinePreview = (wParam & MK_CONTROL) != 0 && _session.LastPaintPoint.HasValue && !_session.IsStroking;
                 Projector.PickLine(x, y, out var p, out var d);
@@ -155,6 +189,36 @@ namespace MeshFit.SolidWorks
             }
             catch (Exception ex) { Trace.WriteLine("MeshFit move: " + ex); }
             return 0;
+        }
+
+        private static List<(double x, double y)> Rectangle(List<(double x, double y)> s)
+        {
+            var a = s[0]; var b = s[s.Count - 1];
+            return new List<(double x, double y)> { (a.x, a.y), (b.x, a.y), (b.x, b.y), (a.x, b.y) };
+        }
+
+        /// <summary>Adds the cursor to the shape and rebuilds its outline as model points in front of the mesh.</summary>
+        private void UpdateShapeOutline(int x, int y)
+        {
+            if (_session.Tool == PaintTool.Rectangle)
+            {
+                if (_shape.Count < 2) _shape.Add((x, y)); else _shape[1] = (x, y);
+            }
+            else
+            {
+                var last = _shape[_shape.Count - 1];
+                if ((last.x - x) * (last.x - x) + (last.y - y) * (last.y - y) >= 9) _shape.Add((x, y));
+            }
+            var outline = _session.Tool == PaintTool.Rectangle ? Rectangle(_shape) : _shape;
+            var b = _session.Mesh.Bounds;
+            var centre = b.Center;
+            double radius = 0.5 * b.Diagonal;
+            _session.ShapeOutline.Clear();
+            foreach (var (px, py) in outline)
+            {
+                Projector.PickLine(px, py, out var p, out var d);
+                _session.ShapeOutline.Add(p + d * ((centre - p).Dot(d) + radius));
+            }
         }
 
         /// <summary>Ctrl/Shift + wheel: resize the brush by 10% per notch (Photoshop style).</summary>

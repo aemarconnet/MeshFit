@@ -158,6 +158,8 @@ namespace MeshFit.Core.Selection
         }
 
         public bool CanUndo => _undo.Count > 0;
+        /// <summary>Number of undoable steps (a mode records it on entry so Cancel can roll back to it).</summary>
+        public int UndoCount => _undo.Count;
         public bool CanRedo => _redo.Count > 0;
         /// <summary>Description of the step Undo would revert (null if none).</summary>
         public string UndoLabel => _undo.Count > 0 ? _undo.Peek().Label : null;

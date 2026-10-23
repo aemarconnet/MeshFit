@@ -114,69 +114,104 @@ your own installation instead, run:
 dotnet build src/MeshFit.SolidWorks -c Release -p:SolidWorksInteropDir="C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist"
 ```
 
-## The feature loop: MeshFit tab → Reverse Engineer
+## Workflow: the MeshFit tab, left to right
 
-MeshFit adds a **MeshFit** tab to the CommandManager ribbon with these groups:
+The layout follows the established scan-to-CAD tools (Geomagic Design X and Geomagic for SOLIDWORKS,
+Mesh2Surface, QUICKSURFACE, ScanTo3D). The comparison is in
+[docs/workflow-comparison.html](docs/workflow-comparison.html). The ribbon reads in the order you
+work:
 
-- **Mesh:** Reverse Engineer, Load Mesh, Mesh Body, Position Mesh.
-- **Select:**
-  - Paint tools: Smart Fill, Brush, Fillet, Shell, Pick Region and Paint Off. The active tool shows
-    as pressed.
-  - **Remove** toggle.
-  - New Region, Fill Islands, Clean Up and Optimize Selection.
-- **Fit:**
-  - Surface-type buttons: Auto, Plane, Cylinder, Cone, Sphere, Torus and Freeform. The active
-    region's type shows as pressed.
-  - **Fit + Grow**, Fit Only and Fit All.
-- **Build:** Surface, Extruded Surface, Revolved Surface, Next Feature, and Hide/Show Surfaces.
-- **Analyze:** Measure Fillet, Boundary Curves, Accuracy, Zebra.
-- **Files:** Export IGES, Save/Open Project, Settings, Unload Mesh.
+| Group | Commands |
+|---|---|
+| **Scan** | **Import Mesh**, Mesh Body, Unload Mesh |
+| **Align** | **Align Scan** (numeric, mates or automatic) |
+| **Regions** | **Region Groups**; selection modes Paint Brush, Flood Fill, Rectangle, Freehand, Fillet Band, Pick Region; Extend To Similar, Remove, Clear Selection, Region List |
+| **Sketch** | **Mesh Sketch**, Boundary Curves |
+| **Model** | **Surface Primitives**, Extrusion Wizard, Revolution Wizard, Mesh Fit |
+| **Analyze** | **Accuracy Analyzer**, Measure Fillet, Curvature Map, Zebra |
+| **Output** | Hide / Show Surfaces, Export IGES, Save / Open Project, Settings |
 
-**Reverse Engineer** opens a PropertyManager that works like a native SOLIDWORKS feature. Its
-message box at the top always says what to do next. It has these groups:
+Bold commands are the large buttons. The paint tools and wizards are stacked with their names, and
+the rest are icons with tooltips. The active selection mode, Remove and Curvature Map show as
+pressed.
 
-1. **Regions.** A running list of every region, always at the top, with a name box to rename the
-   active region and **Clear selection**. Each line shows:
-   - **Status:** ✔ surface created, ○ fitted within tolerance, ⚠ outside tolerance, · not fitted.
-   - **Name.**
-   - **Type and main size**, e.g. `Cylinder R25`.
-   - **Largest deviation.**
+### 1. Region Groups (regions first)
 
-   Below the list is a summary of how many regions are painted, fitted and created. Click a line
-   to make that region active. New and Delete buttons are also here.
-2. **Paint.** Choose Smart fill, Brush, Fillet, Shell, Pick or Off. You can also:
-   - Switch to **Remove** mode.
-   - Set the brush **diameter** and the smart-fill **angle**.
-   - Use **Fill islands**, **Clean up**, and **Grow / Shrink edge**.
-3. **Surface.** Choose the type with the shape buttons: Auto, Plane, Sphere, Cylinder, Cone, Torus
-   or Freeform. You can also:
-   - Set the **tolerance**.
-   - Turn **Clean geometry** and **Stop at fillets** on or off.
-   - Click **Fit + grow** to fit. The result appears below the button.
-4. **Create.** Choose **Fitted surface**, **Sketch + extruded surface** or **Sketch + revolved
-   surface**.
-5. **Display.** Show or hide the deviation map, curvature, surface preview and mesh.
+**Region Groups** is a mode, as in Design X. When you enter it on a scan that has no regions yet,
+**Auto Segment** runs and splits the scan:
+- at creases sharper than the *crease angle*;
+- at fillets tighter than *fillets up to radius*, using the curvature analysis.
 
-**✔ OK** creates the feature. With *Continue with the next feature* checked (the default), it then:
+A face and the fillets running into it become separate regions. Pieces smaller than *smallest
+region* join their neighbour. *Classify* fits every new region so the list shows its type.
 
-1. Hides the new surface.
-2. Starts a new region.
-3. Reopens the page, so you keep going feature by feature, as with Fillet.
+- **Regions list.** It is always visible. Each line shows the status (✔ feature created, ○ fitted
+  within tolerance, ⚠ outside tolerance, · not fitted), the name, the type and size (e.g.
+  `Cylinder R25`) and the largest deviation. Click a line to make that region active.
+- **Edit regions.** Rename, Merge with, Insert region, Clear selection, Delete, Extend to similar
+  (fit and grow over the same surface), Enlarge, Shrink, Fill islands, Clean up.
+- **Selection mode.** Flood Fill, Paint Brush, Rectangle, Freehand, Fillet Band, Whole Shell,
+  Pick Region, plus Remove, the brush diameter and the Flood Fill edge angle.
+  - Rectangle and Freehand select only triangles that face you and are not hidden.
+- **Leaving the mode.** ✔ keeps the regions. ✖ undoes everything done in the mode, and Redo
+  brings it back. Esc, or opening another command, keeps the regions.
 
-**✖ Cancel** leaves without creating anything. **Undo / Redo** in the page title bar undo paint
-steps. **Esc** cancels a running fit.
+### 2. Modeling wizards
 
-The task pane is now a companion. It has the region list, the progress strip, the deviation legend
-and readout, and the reports. Its **Next ▶** button and the right-click paint menu give the same
-steps outside the PropertyManager. The **Regions** ribbon button opens it on the region list.
+**Surface Primitives**, **Extrusion Wizard**, **Revolution Wizard** and **Mesh Fit** each open
+their own PropertyManager:
 
-To keep the ribbon narrow:
-- Only Reverse Engineer, Fit + Grow, Surface and Next Feature are large buttons.
-- Paint tools and a few key commands are stacked three high with their names.
-- Everything else is an icon with a tooltip.
+- **Regions:**
+  - The active region is preselected.
+  - Click regions on the scan to add or remove them. They light up amber and the rest dim.
+- **Shape:** Surface Primitives only. Automatic (the simplest type within tolerance), or Plane,
+  Cylinder, Cone, Sphere or Torus.
+- **Options:** tolerance and Clean geometry. Also:
+  - Extension past the region (Surface Primitives, Mesh Fit).
+  - Snap to X/Y/Z (Extrusion Wizard, Revolution Wizard).
+  - Control points and smoothing (Mesh Fit).
+- **Result:**
+  - Surface Primitives and Mesh Fit: **Preview** fits the regions and turns on the deviation map.
+  - Extrusion and Revolution Wizards: Preview draws the profile on the scan, with its direction or
+    axis.
+- **✔** creates the features:
+  - Surface Primitives and Mesh Fit: a surface for each region.
+  - Extrusion and Revolution Wizards: one feature, an editable lines-and-arcs sketch with an
+    extruded or revolved surface.
+- **Pushpin.** It works as Design X's *Lock*: after ✔ the wizard stays open with an empty selection
+  for the next feature.
 
-Every MeshFit message also shows in the SOLIDWORKS status bar, so you get feedback with the task
-pane closed. **Reverse Engineer** without a mesh asks for a mesh file first, then opens the page.
+### 3. Mesh Sketch
+
+**Mesh Sketch** sections the scan and turns the section into an ordinary SOLIDWORKS sketch.
+
+1. Select a base plane: a reference plane (Front / Top / Right from the flyout tree), a planar face,
+   or *the active region's plane*.
+2. Set an **offset distance**.
+3. Check the preview: the section is drawn in grey and the fitted lines and arcs in amber. Auto
+   Sketch fits the fewest lines and arcs within the tolerance, and closed round sections become
+   circles.
+4. ✔ writes the sketch with merged end points, tangent arcs and horizontal/vertical lines. Its
+   plane is created if needed.
+
+Then use SOLIDWORKS's own Extrude, Revolve or Cut.
+
+### Shortcuts
+
+- **Right click while a selection mode is active** opens the MeshFit menu. It has:
+  - The selection modes and brush settings.
+  - Clear selection and Undo.
+  - The Regions submenu.
+  - The Model submenu (the wizards and Mesh Sketch).
+  - Quick create for the active region.
+- **Delete** clears the active region's selection.
+- **Ctrl + click** paints a straight stroke.
+- **Ctrl/Shift + wheel** sizes the brush.
+- **Shift** removes while held.
+- **Esc** cancels a running job or leaves the selection mode.
+
+The task pane is a companion. It has the region list, the progress strip, the deviation legend and
+readout, and the reports. Its **Region Groups…** button opens the mode.
 
 ### Clean geometry
 
@@ -224,7 +259,7 @@ a wheel-arch lip:
 
 - **Header:**
   - The next-step guide.
-  - **Reverse Engineer…**, **Next ▶** and **Settings…**.
+  - **Region Groups…**, **Next ▶** and **Settings…**.
   - **Undo / Redo**.
   - The **active region** dropdown.
   - A **progress strip** while anything runs: task, current step, % bar and elapsed seconds, with
@@ -341,14 +376,20 @@ Lengths are in the mesh units.
 ```
 src/MeshFit.Core         netstandard2.0, no dependencies
   Mesh/                  STL/OBJ/PLY readers, indexed mesh with adjacency, BVH (ray casts, nearest point)
-  Selection/             regions, undo/redo, brush, smart fill, grow-to-surface, auto segmentation
+  Selection/             regions, undo/redo, brush, smart fill, grow-to-surface,
+                         auto segmentation (creases + curvature-based fillet splitting)
   Fitting/               orthogonal-distance LM fitters (plane, sphere, cylinder, cone, torus),
                          B-spline approximation with thin-plate smoothing + parameter correction,
                          automatic type selection, outlier rejection, statistics
+  Analysis/              mesh sections + Auto Sketch (lines, arcs, circles), extrusion / revolution
+                         profiles, fillet measurement, feature curves, CAD-vs-scan comparison
+  Alignment/             mesh positioning (mates, principal axes, symmetry)
   Export/                exact NURBS conversion of analytic surfaces, IGES 5.3 writer (entity 128)
   Project/               .meshfit project files
-src/MeshFit.SolidWorks   net48 COM add-in: task pane UI, OpenGL overlay, mouse picking,
-                         SOLIDWORKS surface creation
+src/MeshFit.SolidWorks   net48 COM add-in: MeshFit ribbon tab, PropertyManager pages (Region Groups,
+                         Surface Primitives / Extrusion / Revolution / Mesh Fit wizards, Mesh Sketch),
+                         task pane, OpenGL overlay, mouse picking, SOLIDWORKS feature creation
+docs/                    workflow-comparison.html: UI comparison with the established tools
 src/MeshFit.Cli          net8.0 batch tool
 tests/MeshFit.Core.Tests xUnit tests: fitters on synthetic noisy data, NURBS exactness, IO, painting, IGES
 ```
@@ -358,7 +399,7 @@ Run the tests with `dotnet test`.
 ## Troubleshooting
 
 MeshFit writes a log to `%LOCALAPPDATA%\MeshFit\MeshFit.log`. The log records:
-- Startup, mesh loading, and opening the Reverse Engineer page.
+- Startup, mesh loading, and opening each MeshFit page.
 - Every internal error, with its stack trace.
 
 Errors inside MeshFit are caught and shown in the status bar instead of closing SOLIDWORKS. If

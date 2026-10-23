@@ -1,0 +1,265 @@
+<title>MeshFit Workflow Benchmark</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a drawing-sheet column — title block header, then matrices in scrollable frames, deviation-scale motif as the only colour. */
+:root {
+  --paper: #f3f5f6;
+  --sheet: #ffffff;
+  --ink: #1d2a33;
+  --ink-soft: #52616b;
+  --rule: #d3dbe0;
+  --accent: #1f6fb2;        /* drawing blue */
+  --accent-soft: #e3eef8;
+  --dev-lo: #2f6fd6;        /* deviation map: below surface */
+  --dev-ok: #2f9e55;        /* within tolerance */
+  --dev-hi: #d64a2f;        /* above surface */
+  --flag: #b7791f;
+  --flag-soft: #fbf1df;
+  --good-soft: #e5f4ea;
+  --font-display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Consolas", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #12181d; --sheet: #182129; --ink: #e3eaee; --ink-soft: #9fb0bb; --rule: #2c3a44;
+    --accent: #6aaee8; --accent-soft: #1b3043; --dev-lo: #6c9cf0; --dev-ok: #5cc27e; --dev-hi: #f07b5f;
+    --flag: #e2b45c; --flag-soft: #33291a; --good-soft: #1b3324; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #12181d; --sheet: #182129; --ink: #e3eaee; --ink-soft: #9fb0bb; --rule: #2c3a44;
+  --accent: #6aaee8; --accent-soft: #1b3043; --dev-lo: #6c9cf0; --dev-ok: #5cc27e; --dev-hi: #f07b5f;
+  --flag: #e2b45c; --flag-soft: #33291a; --good-soft: #1b3324; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 64px;
+}
+main { max-width: 1080px; margin: 0 auto; display: grid; gap: 40px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2rem, 4.5vw, 2.9rem); font-weight: 700; letter-spacing: .01em; }
+h2 { font-size: 1.6rem; font-weight: 600; }
+h3 { font-size: 1.15rem; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+a { color: var(--accent); }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eyebrow { font-family: var(--font-mono); font-size: .74rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); }
+section { display: grid; gap: 16px; }
+.lede { font-size: 1.12rem; color: var(--ink-soft); }
+
+/* Title block, after a drawing sheet's */
+.titleblock { background: var(--sheet); border: 1.5px solid var(--ink); display: grid; grid-template-columns: 1fr auto; }
+.titleblock .name { padding: 22px 24px; display: grid; gap: 10px; border-right: 1.5px solid var(--ink); min-width: 0; }
+.titleblock dl { margin: 0; display: grid; grid-template-columns: auto auto; font-family: var(--font-mono); font-size: .78rem; }
+.titleblock dt, .titleblock dd { margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--rule); }
+.titleblock dt { color: var(--ink-soft); text-transform: uppercase; letter-spacing: .08em; border-right: 1px solid var(--rule); }
+.titleblock dl > :nth-last-child(-n+2) { border-bottom: 0; }
+.scale { height: 8px; background: linear-gradient(90deg, var(--dev-lo), var(--dev-ok) 35%, var(--dev-ok) 65%, var(--dev-hi)); border-radius: 2px; max-width: 320px; }
+@media (max-width: 720px) {
+  .titleblock { grid-template-columns: 1fr; }
+  .titleblock .name { border-right: 0; border-bottom: 1.5px solid var(--ink); }
+}
+
+/* Findings */
+.findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.finding { background: var(--sheet); border-top: 3px solid var(--accent); padding: 14px 16px; display: grid; gap: 6px; align-content: start; }
+.finding p { font-size: .95rem; }
+
+/* Matrices */
+.frame { overflow-x: auto; background: var(--sheet); border: 1px solid var(--rule); }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--rule); }
+thead th { font-family: var(--font-display); font-weight: 600; font-size: .95rem; background: var(--accent-soft); position: sticky; top: 0; }
+tbody th { font-family: var(--font-display); font-weight: 600; white-space: nowrap; }
+td code, p code, li code { font-family: var(--font-mono); font-size: .82em; }
+.matrix { min-width: 1040px; }
+.matrix td.now { background: var(--flag-soft); }
+.matrix td.next { background: var(--good-soft); }
+.matrix th.now, .matrix th.next { white-space: nowrap; }
+.cmd { font-family: var(--font-mono); font-size: .8rem; white-space: nowrap; }
+.muted { color: var(--ink-soft); }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: .85rem; color: var(--ink-soft); }
+.chip { display: inline-block; width: 12px; height: 12px; vertical-align: -1px; margin-right: 6px; border: 1px solid var(--rule); }
+.chip.now { background: var(--flag-soft); } .chip.next { background: var(--good-soft); }
+
+/* Gap list */
+ol.gaps { margin: 0; padding: 0; list-style: none; counter-reset: gap; display: grid; gap: 10px; }
+ol.gaps li { counter-increment: gap; background: var(--sheet); padding: 14px 16px 14px 56px; position: relative; display: grid; gap: 4px; }
+ol.gaps li::before { content: counter(gap); position: absolute; left: 16px; top: 12px; font-family: var(--font-display); font-weight: 700; font-size: 1.5rem; color: var(--accent); }
+ol.gaps .fix { font-size: .92rem; }
+ol.gaps .fix b { font-weight: 600; }
+
+/* Proposed ribbon */
+.ribbon { display: flex; gap: 0; overflow-x: auto; background: var(--sheet); border: 1px solid var(--rule); }
+.box { padding: 10px 14px 8px; border-right: 1px solid var(--rule); display: grid; grid-template-rows: 1fr auto; gap: 8px; min-width: 150px; }
+.box:last-child { border-right: 0; }
+.box ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; font-size: .86rem; }
+.box li.big { font-weight: 700; }
+.box .label { font-family: var(--font-mono); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); text-align: center; border-top: 1px solid var(--rule); padding-top: 6px; }
+.step { font-family: var(--font-display); color: var(--accent); font-weight: 700; }
+
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.panel { background: var(--sheet); padding: 16px 18px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.panel ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .94rem; }
+.note { border-left: 3px solid var(--flag); background: var(--flag-soft); padding: 10px 14px; font-size: .92rem; max-width: 80ch; }
+.sources { font-size: .88rem; color: var(--ink-soft); display: grid; gap: 4px; padding-left: 18px; margin: 0; }
+footer { font-size: .85rem; color: var(--ink-soft); }
+@media (prefers-reduced-motion: no-preference) { a { transition: color .15s; } }
+</style>
+
+<main>
+  <header class="titleblock">
+    <div class="name">
+      <span class="eyebrow">Scan-to-CAD · UI and workflow review</span>
+      <h1>MeshFit Workflow Benchmark</h1>
+      <p class="lede">How the established reverse-engineering tools organise their commands, and the layout MeshFit adopts so the same habits carry over.</p>
+      <div class="scale" role="img" aria-label="Deviation colour scale: blue below, green within tolerance, red above"></div>
+    </div>
+    <dl>
+      <dt>Product</dt><dd>MeshFit for SOLIDWORKS</dd>
+      <dt>Compared</dt><dd>5 tools</dd>
+      <dt>Reference</dt><dd>Geomagic Design X</dd>
+      <dt>Host</dt><dd>SOLIDWORKS 2024–2026</dd>
+      <dt>Date</dt><dd>2026-10-23</dd>
+    </dl>
+  </header>
+
+  <section aria-labelledby="h-summary">
+    <span class="eyebrow">Summary</span>
+    <h2 id="h-summary">What the established tools have in common</h2>
+    <div class="findings">
+      <div class="finding"><h3>One linear workflow</h3><p>The toolbar reads left to right in the order you work: scan, mesh clean-up, align, regions, sketch, model, compare. Geomagic for SOLIDWORKS is described as a linear left-to-right ribbon; Design X's Insert menu and toolbars follow the same order.</p></div>
+      <div class="finding"><h3>Regions come first</h3><p>Design X's <b>Region Group</b> mode runs <b>Auto Segment</b> as soon as you enter it, colouring the whole scan by surface type. You then <i>pick</i> regions for features. Painting is for fixing regions, not the main way to select.</p></div>
+      <div class="finding"><h3>One wizard per feature</h3><p>Surface Primitives, Extrusion Wizard, Revolution Wizard, Mesh Fit: each is its own command with a dialog. Each has a yellow region selection box, options, Preview, OK, and a <b>Lock</b> button that keeps it open for the next one.</p></div>
+      <div class="finding"><h3>Sketch from sections</h3><p><b>Mesh Sketch</b> cuts the scan with a base plane. <b>Auto Sketch</b> fits lines and arcs to the section with constraints. You then build the part with normal Extrude and Revolve. Mesh2Surface and QUICKSURFACE work the same way inside SOLIDWORKS.</p></div>
+      <div class="finding"><h3>Deviation always visible</h3><p>Design X's <b>Accuracy Analyzer</b> pane works in every mode and while previewing primitives. Geomagic for SOLIDWORKS puts deviation analysis in every wizard.</p></div>
+    </div>
+    <p class="note">MeshFit grew the other way: paint a feature, then Fit + Grow, then Create, all in one PropertyManager. That is why its tools and their positions don't match what users of these products expect.</p>
+  </section>
+
+  <section aria-labelledby="h-matrix">
+    <span class="eyebrow">Workflow matrix</span>
+    <h2 id="h-matrix">Each workflow stage, tool by tool</h2>
+    <div class="legend"><span><span class="chip now"></span>MeshFit before this change</span><span><span class="chip next"></span>MeshFit after this change</span></div>
+    <div class="frame">
+      <table class="matrix">
+        <thead>
+          <tr><th scope="col">Stage</th><th scope="col">Geomagic Design X</th><th scope="col">Geomagic for SOLIDWORKS</th><th scope="col">Mesh2Surface for SOLIDWORKS</th><th scope="col">QUICKSURFACE</th><th scope="col">SOLIDWORKS ScanTo3D</th><th scope="col" class="now">MeshFit (before)</th><th scope="col" class="next">MeshFit (after)</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">Import</th>
+            <td>Insert &gt; Import; Scanner Direct Control</td><td>Import mesh (STL, PLY, OBJ); scan in SOLIDWORKS</td><td>Import STL, OBJ, PTX</td><td>Import mesh</td><td>Open mesh / point cloud file</td>
+            <td class="now">Load Mesh, Mesh Body</td><td class="next"><span class="cmd">Import Mesh</span> · <span class="cmd">Mesh Body</span></td></tr>
+          <tr><th scope="row">Mesh prep</th>
+            <td>Mesh mode: Healing Wizard, Fill Holes, Smooth, Decimate</td><td>Smoothing, spike removal, hole filling, remeshing</td><td class="muted">Basic</td><td class="muted">Basic</td><td>Mesh Prep Wizard</td>
+            <td class="now muted">None (use SOLIDWORKS mesh tools)</td><td class="next muted">Unchanged</td></tr>
+          <tr><th scope="row">Align</th>
+            <td>Align Wizard, Interactive Alignment, Best Fit</td><td>Align to world coordinate system, picked points</td><td>Extract features, then align</td><td>Primitive-based alignment, symmetry</td><td>Mesh Prep Wizard orientation</td>
+            <td class="now">Position Mesh (numeric, mates, auto)</td><td class="next"><span class="cmd">Align Scan</span>, same wizard, now second on the ribbon</td></tr>
+          <tr><th scope="row">Regions</th>
+            <td>Region Group mode: Auto Segment, Merge, Split, Insert, Enlarge, Shrink</td><td>Regionalisation by curvature; region, lasso, box, polygon selection</td><td>Select area with brush and tolerance</td><td>Brush selection; automatic primitive extraction</td><td>Surface Wizard guided creation segments the mesh</td>
+            <td class="now">Paint each feature; Auto Segment hidden in the task pane</td><td class="next"><span class="cmd">Region Groups</span> mode: Auto Segment on entry (curvature aware), list with types, Merge, Enlarge, Shrink, Insert</td></tr>
+          <tr><th scope="row">Selection</th>
+            <td>Rectangle (default), Line, Circle, Polyline, Freehand, Paint Brush, Flood Fill, Extend To Similar, Extend To Sudden Change, Visible Only</td><td>Region, Lasso, Box, Polygon</td><td>Brush</td><td>Brush</td><td>Paint, box</td>
+            <td class="now">Brush, Smart fill, Shell, Fillet band, Pick</td><td class="next">Paint Brush, Flood Fill, <span class="cmd">Rectangle</span>, <span class="cmd">Freehand</span>, Extend To Similar, Fillet Band, Pick Region (visible only)</td></tr>
+          <tr><th scope="row">Sketch</th>
+            <td>Mesh Sketch (planar or rotational sections) + Auto Sketch</td><td>Mesh cross-sections → sketches</td><td>Parallel, rotational and outline sections; lines, arcs, circles fitted</td><td>Section → lines, arcs, slots; deviation-coloured sketch</td><td>Curve Wizard sections</td>
+            <td class="now">None (Boundary curves only)</td><td class="next"><span class="cmd">Mesh Sketch</span>: base plane + offset, section, Auto Sketch to an editable SOLIDWORKS sketch with relations</td></tr>
+          <tr><th scope="row">Model</th>
+            <td>Surface Primitives, Extrusion / Revolution / Sweep / Loft Wizard, Mesh Fit</td><td>Extract: extrude, revolve, sweep, freeform, primitives</td><td>Primitives as ref geometry, surface or solid; freeform</td><td>Primitives with constrained fit; automatic freeform</td><td>Surface Wizard</td>
+            <td class="now">Fit + Grow, then Create (surface / extrude / revolve) in one PropertyManager</td><td class="next"><span class="cmd">Surface Primitives</span> · <span class="cmd">Extrusion Wizard</span> · <span class="cmd">Revolution Wizard</span> · <span class="cmd">Mesh Fit</span>, one PropertyManager each</td></tr>
+          <tr><th scope="row">Clean geometry</th>
+            <td>Constraint tolerances for horizontal, vertical, tangent (2024.1)</td><td class="muted">Not documented</td><td class="muted">Not documented</td><td>Constrained best fit (parallel to axis, perpendicular)</td><td class="muted">None</td>
+            <td class="now">Clean geometry (snap, coaxial, tangent, round)</td><td class="next">Same, plus sketch relations from Auto Sketch</td></tr>
+          <tr><th scope="row">Analyze</th>
+            <td>Accuracy Analyzer pane (every mode, live while previewing)</td><td>Deviation analysis in every wizard</td><td>Deviation analysis</td><td>Real-time deviation colours</td><td>Deviation Analysis</td>
+            <td class="now">Accuracy button; deviation map toggle</td><td class="next"><span class="cmd">Accuracy Analyzer</span>; every wizard previews with the deviation map</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-conv">
+    <span class="eyebrow">Interaction conventions</span>
+    <h2 id="h-conv">How the commands behave</h2>
+    <div class="frame">
+      <table style="min-width: 760px">
+        <thead><tr><th scope="col">Convention</th><th scope="col">Design X (and its SOLIDWORKS plug-in)</th><th scope="col">SOLIDWORKS</th><th scope="col">MeshFit after this change</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Command dialog</th><td>Dialog tree: stages (Next / Previous), Preview, OK, Cancel, Lock</td><td>PropertyManager: OK, Cancel, pushpin</td><td>One PropertyManager per wizard: Preview, OK, Cancel, pushpin = Lock</td></tr>
+          <tr><th scope="row">Entity input</th><td>Yellow active selection box; click regions in the view</td><td>Pink selection box; click entities</td><td>Region list in each wizard; click a region on the scan to add or remove it</td></tr>
+          <tr><th scope="row">Modes</th><td>Region Group, Mesh Sketch: Accept / Cancel all changes on exit</td><td>Sketch mode: exit sketch</td><td>Region Groups: ✔ keeps edits, ✖ undoes everything done in the mode</td></tr>
+          <tr><th scope="row">Add / remove</th><td>Shift adds, Ctrl removes</td><td>Ctrl toggles</td><td>Drag adds; Shift removes; Remove toggle (kept from earlier requests)</td></tr>
+          <tr><th scope="row">Brush size</th><td>Alt + drag</td><td>n/a</td><td>Ctrl/Shift + wheel (kept from earlier requests)</td></tr>
+          <tr><th scope="row">Straight stroke</th><td>Line selection mode</td><td>n/a</td><td>Ctrl + click from the last point</td></tr>
+          <tr><th scope="row">Box / lasso</th><td>Rectangle (default), Freehand; Visible Only toggle</td><td>Box select, lasso</td><td>Rectangle and Freehand modes, front-facing visible triangles only</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Two MeshFit shortcuts stay different from Design X on purpose: Ctrl + click draws straight strokes and Ctrl/Shift + wheel sizes the brush. Both were requested earlier. If Design X habits matter more, the Design X set (Shift adds, Ctrl removes, Alt + drag sizes the brush) can be added as an option.</p>
+  </section>
+
+  <section aria-labelledby="h-gaps">
+    <span class="eyebrow">Gaps, most important first</span>
+    <h2 id="h-gaps">Where MeshFit differed, and the fix</h2>
+    <ol class="gaps">
+      <li><h3>Paint-first instead of region-first</h3><p class="fix"><b>Fix:</b> the <i>Region Groups</i> mode runs Auto Segment on entry. It splits at sharp edges and at fillet bands from the curvature analysis, then classifies every region by fitting it. You edit regions instead of painting each feature from scratch.</p></li>
+      <li><h3>One PropertyManager did everything</h3><p class="fix"><b>Fix:</b> four separate wizards with their names from Design X: <i>Surface Primitives</i>, <i>Extrusion Wizard</i>, <i>Revolution Wizard</i>, <i>Mesh Fit</i>. Each takes regions as input and has Preview, OK, and the pushpin as Lock.</p></li>
+      <li><h3>No Mesh Sketch</h3><p class="fix"><b>Fix:</b> <i>Mesh Sketch</i> takes a base plane (a SOLIDWORKS plane, a planar face or a planar region) and an offset. It sections the scan, fits lines and arcs, and writes a normal SOLIDWORKS sketch with coincident, tangent, horizontal and vertical relations. Then you extrude or revolve with SOLIDWORKS's own commands.</p></li>
+      <li><h3>Ribbon not in workflow order</h3><p class="fix"><b>Fix:</b> Scan → Align → Regions → Sketch → Model → Analyze → Output, left to right, as in Geomagic for SOLIDWORKS.</p></li>
+      <li><h3>Missing standard selection shapes</h3><p class="fix"><b>Fix:</b> Rectangle and Freehand (lasso) modes that select front-facing visible triangles only. Paint Brush and Flood Fill keep their behaviour under the familiar names.</p></li>
+      <li><h3>Deviation only on demand</h3><p class="fix"><b>Fix:</b> every wizard's Preview turns on the deviation map for its regions. The Accuracy Analyzer keeps its own command for CAD-vs-scan checks.</p></li>
+    </ol>
+  </section>
+
+  <section aria-labelledby="h-layout">
+    <span class="eyebrow">Proposed layout</span>
+    <h2 id="h-layout">The MeshFit ribbon, left to right</h2>
+    <div class="ribbon" role="list">
+      <div class="box" role="listitem"><ul><li class="big">Import Mesh</li><li>Mesh Body</li><li>Unload Mesh</li></ul><span class="label"><span class="step">1</span> Scan</span></div>
+      <div class="box" role="listitem"><ul><li class="big">Align Scan</li></ul><span class="label"><span class="step">2</span> Align</span></div>
+      <div class="box" role="listitem"><ul><li class="big">Region Groups</li><li>Paint Brush</li><li>Flood Fill</li><li>Rectangle</li><li>Freehand</li><li>Extend To Similar</li><li>Fillet Band</li><li>Pick Region</li><li>Remove · Clear</li></ul><span class="label"><span class="step">3</span> Regions</span></div>
+      <div class="box" role="listitem"><ul><li class="big">Mesh Sketch</li><li>Boundary Curves</li></ul><span class="label"><span class="step">4</span> Sketch</span></div>
+      <div class="box" role="listitem"><ul><li class="big">Surface Primitives</li><li>Extrusion Wizard</li><li>Revolution Wizard</li><li>Mesh Fit</li></ul><span class="label"><span class="step">5</span> Model</span></div>
+      <div class="box" role="listitem"><ul><li class="big">Accuracy Analyzer</li><li>Measure Fillet</li><li>Curvature Map</li><li>Zebra</li></ul><span class="label"><span class="step">6</span> Analyze</span></div>
+      <div class="box" role="listitem"><ul><li>Hide / Show Surfaces</li><li>Export IGES</li><li>Save / Open Project</li><li>Settings</li></ul><span class="label"><span class="step">7</span> Output</span></div>
+    </div>
+    <div class="cols">
+      <div class="panel"><h3>A wizard PropertyManager</h3><ul>
+        <li><b>Regions</b>: the regions this feature uses. Click regions on the scan to add or remove them.</li>
+        <li><b>Shape / options</b>: shape (Surface Primitives), tolerance, Clean geometry, extension, control points.</li>
+        <li><b>Result</b>: type, size and deviation per region after Preview.</li>
+        <li>✔ creates the features; the pushpin (Lock) keeps the wizard open for the next ones.</li>
+      </ul></div>
+      <div class="panel"><h3>The typical part, step by step</h3><ul>
+        <li>Import Mesh → Align Scan.</li>
+        <li>Region Groups: check the automatic regions, merge or repaint where needed, ✔.</li>
+        <li>Surface Primitives: pick the plane and cylinder regions, Preview, ✔.</li>
+        <li>Mesh Sketch on a plane through a flange → Extrude or Revolve in SOLIDWORKS.</li>
+        <li>Mesh Fit for the doubly curved skin.</li>
+        <li>Accuracy Analyzer to confirm the result.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-src">
+    <span class="eyebrow">Sources</span>
+    <h2 id="h-src">Where the reference details come from</h2>
+    <ul class="sources">
+      <li><a href="https://www.engineering.pitt.edu/contentassets/52314f399aba40fa86709314a569641c/geomagicdesignx2014userguide.pdf">Geomagic Design X 2014 User Guide</a> (modes, dialog tree, Select &gt; Mode, Auto Segment, Surface Primitives, Extrusion Wizard, Mesh Fit, Mesh Sketch, Auto Sketch)</li>
+      <li><a href="https://s3.us-east-2.amazonaws.com/dl.geomagic.com/binaries/support/downloads/ApplicationInstallers/Design+X/GeomagicDesignX_ReleaseNotes_v2024.1.0_en-US.pdf">Design X 2024.1.0 release notes</a> (constraint tolerances, Accuracy Analyzer during primitive preview)</li>
+      <li><a href="https://cdn.goengineer.com/Geomagic_for_SOLIDWORKS_datasheet.pdf">Geomagic for SOLIDWORKS datasheet</a> and <a href="https://develop3d.com/reviews/review-geomagic-for-solidworks-cad-3d-scanning-design-hardware/">DEVELOP3D review</a></li>
+      <li><a href="https://files.solidworks.com/partners/pdfs/brochuremesh2surface20232.pdf">Mesh2Surface for SOLIDWORKS brochure</a></li>
+      <li><a href="https://www.solidworks.com/partner-product/quicksurface-solidworks">QUICKSURFACE for SOLIDWORKS partner page</a></li>
+      <li><a href="https://help.solidworks.com/2018/english/solidworks/scanto3d/c_two_methods_for_converting_scan_data.htm">SOLIDWORKS ScanTo3D help: two methods for converting scan data</a></li>
+      <li><a href="https://www.cati.com/blog/5-essential-tool-sets-for-design-x/">CATI: 5 essential tool sets for Design X</a></li>
+    </ul>
+    <p class="muted" style="font-size:.88rem">The details for Geomagic for SOLIDWORKS, Mesh2Surface and QUICKSURFACE come from vendor and reseller material. Exact menu labels may differ in current releases.</p>
+  </section>
+
+  <footer>MeshFit · branch ccr-d21e0b16-x4gm1v</footer>
+</main>

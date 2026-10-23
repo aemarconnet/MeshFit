@@ -1,34 +1,43 @@
 using System;
+using System.Collections.Generic;
 using System.Windows.Forms;
 using SolidWorks.Interop.sldworks;
 
 namespace MeshFit.SolidWorks
 {
-    /// <summary>Glue between the Reverse Engineer PropertyManager page and the task pane / session.</summary>
+    /// <summary>Glue between the PropertyManager pages (Region Groups, modeling wizards, Mesh Sketch) and the add-in.</summary>
     public sealed partial class SwAddin
     {
-        private ReverseEngineerPage _page;
+        private readonly Dictionary<string, PageBase> _pages = new Dictionary<string, PageBase>();
         private bool _pageRefreshQueued;
 
-        /// <summary>Opens the Reverse Engineer PropertyManager (paint → fit → ✔ create).</summary>
-        internal void ShowReverseEngineerPage()
+        internal RegionGroupsPage RegionGroups => GetPage("regions", () => new RegionGroupsPage(this));
+        internal WizardPage Wizard(WizardKind kind) => GetPage("wizard" + kind, () => new WizardPage(this, kind));
+        internal MeshSketchPage MeshSketch => GetPage("sketch", () => new MeshSketchPage(this));
+
+        private T GetPage<T>(string key, Func<T> create) where T : PageBase
         {
-            if (_page == null)
+            if (!_pages.TryGetValue(key, out var p))
             {
-                _page = new ReverseEngineerPage(this);
-                Session.Changed += QueuePageRefresh;
+                p = create();
+                _pages[key] = p;
+                if (_pages.Count == 1) Session.Changed += QueuePageRefresh;
             }
+            return (T)p;
+        }
+
+        /// <summary>Opens a PropertyManager page; a failure is reported instead of looking like a dead button.</summary>
+        internal void ShowPage(PageBase page)
+        {
             try
             {
-                Guarded.Write("Opening the Reverse Engineer page");
-                _page.Show();
-                Guarded.Write("Reverse Engineer page open");
+                Guarded.Write("Opening " + page.Title);
+                page.Show();
             }
             catch (Exception ex)
             {
-                Guarded.Write("Reverse Engineer page failed: " + ex);
-                // Never fail silently: the ribbon button would look unwired.
-                MessageBox.Show(MainWindow, "The Reverse Engineer page could not be opened:\n" + ex.Message, "MeshFit",
+                Guarded.Write(page.Title + " failed: " + ex);
+                MessageBox.Show(MainWindow, $"The {page.Title} page could not be opened:\n{ex.Message}", "MeshFit",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
@@ -36,9 +45,16 @@ namespace MeshFit.SolidWorks
         /// <summary>Session.Changed fires for every brush dab: coalesce page refreshes onto the UI thread.</summary>
         private void QueuePageRefresh()
         {
-            if (_page == null || !_page.IsOpen || _pageRefreshQueued) return;
+            if (_pageRefreshQueued) return;
+            bool any = false;
+            foreach (var p in _pages.Values) any |= p.IsOpen;
+            if (!any) return;
             _pageRefreshQueued = true;
-            Post(() => { _pageRefreshQueued = false; _page?.Refresh(); });
+            Post(() =>
+            {
+                _pageRefreshQueued = false;
+                foreach (var p in _pages.Values) if (p.IsOpen) p.Refresh();
+            });
         }
 
         /// <summary>Runs an action later on the SOLIDWORKS UI thread (after the current callback returns).</summary>
@@ -50,6 +66,8 @@ namespace MeshFit.SolidWorks
         }
 
         internal void Do(Cmd c) => _control?.Execute(c);
+
+        internal TaskPaneControl Control => _control;
 
         /// <summary>The SOLIDWORKS main window: owner for MeshFit windows so they stay in front of it.</summary>
         internal IWin32Window MainWindow
@@ -90,12 +108,5 @@ namespace MeshFit.SolidWorks
 
         /// <summary>Sets the fit tolerance (metres).</summary>
         internal void SetTolerance(double metres) => _control?.SetTolerance(metres);
-
-        /// <summary>Creates the active region's feature; <paramref name="done"/> reports success (possibly later).</summary>
-        internal void CreateFromPage(ReverseEngineerPage.CreateKind kind, bool next, Action<bool> done)
-        {
-            if (_control == null) { done?.Invoke(false); return; }
-            _control.CreateForPage(kind, next, done);
-        }
     }
 }

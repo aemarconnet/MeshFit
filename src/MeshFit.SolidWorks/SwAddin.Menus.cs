@@ -25,8 +25,13 @@ namespace MeshFit.SolidWorks
         // (menu text, command, hint, show on context toolbar)
         private static readonly (string text, Cmd cmd, string hint, bool icon)[] MenuItems =
         {
-            ("Smart fill", Cmd.ToolSmartFill, "Click or drag to fill smooth areas", true),
-            ("Brush", Cmd.ToolBrush, "Drag to paint with the brush", true),
+            ("Region Groups…", Cmd.RegionGroups, "Auto Segment the scan into regions and fix them", true),
+            ("Surface Primitives…", Cmd.SurfacePrimitives, "Planes, cylinders, cones, spheres and tori from regions", false),
+            ("Mesh Sketch…", Cmd.MeshSketch, "Section the scan with a plane and sketch lines and arcs", false),
+            ("Flood Fill", Cmd.ToolSmartFill, "Click or drag to fill smooth areas", true),
+            ("Paint Brush", Cmd.ToolBrush, "Drag to paint with the brush", true),
+            ("Rectangle", Cmd.ToolRectangle, "Drag a box to select visible triangles", false),
+            ("Freehand", Cmd.ToolFreehand, "Drag an outline to select visible triangles", false),
             ("Fill shell", Cmd.ToolFillShell, "Click to fill a whole connected piece", false),
             ("Fillet select", Cmd.ToolFillet, "Click a fillet/blend to select the whole band (curvature based)", false),
             ("Pick region", Cmd.ToolPick, "Click a painted area to make its region active", false),
@@ -129,6 +134,8 @@ namespace MeshFit.SolidWorks
                 case Cmd.TrimFillets:
                     return Session.Curvature != null && Session.ActiveRegion?.TriangleCount > 0 ? 1 : 0;
                 case Cmd.ToolPick: return Session.Tool == PaintTool.PickRegion ? 3 : 1;
+                case Cmd.ToolRectangle: return Session.Tool == PaintTool.Rectangle ? 3 : 1;
+                case Cmd.ToolFreehand: return Session.Tool == PaintTool.Freehand ? 3 : 1;
                 case Cmd.ToolOff: return Session.Tool == PaintTool.None ? 4 : 1;
                 case Cmd.ModeAdd: return Session.RemoveMode ? 1 : 3;
                 case Cmd.ModeRemove: return Session.RemoveMode ? 3 : 1;
@@ -226,5 +233,12 @@ namespace MeshFit.SolidWorks
         public int OnMenuEnableNextFeature() => Enable(Cmd.NextFeature);
         public int OnMenuEnableHideSurfaces() => Enable(Cmd.HideSurfaces);
         public int OnMenuEnableShowSurfaces() => Enable(Cmd.ShowSurfaces);
+
+        // ---- callbacks for the workflow commands in the context menu ----
+        public int OnMenuEnableRegionGroups() => Enable(Cmd.RegionGroups);
+        public int OnMenuEnableSurfacePrimitives() => Enable(Cmd.SurfacePrimitives);
+        public int OnMenuEnableMeshSketch() => Enable(Cmd.MeshSketch);
+        public int OnMenuEnableToolRectangle() => Enable(Cmd.ToolRectangle);
+        public int OnMenuEnableToolFreehand() => Enable(Cmd.ToolFreehand);
     }
 }

@@ -67,6 +67,9 @@ namespace MeshFit.SolidWorks
 
                 Gl.glLineWidth(1.5f);
                 DrawArrays(Gl.GL_LINES, _lineV, _lineC);
+                DrawPolylines(_s.SketchSections, 0x9AA4AA, 1.5f, onTop: false);
+                DrawPolylines(_s.SketchCurves, 0xFFC82E, 3f, onTop: true);
+                DrawShapeOutline();
                 DrawCursor(pixelSize);
             }
             finally
@@ -112,6 +115,39 @@ namespace MeshFit.SolidWorks
                 Gl.glDisableClientState(Gl.GL_COLOR_ARRAY);
                 hv.Free(); hc.Free();
             }
+        }
+
+        private static int Blend(int a, int b) =>
+            (((a >> 16 & 0xFF) + (b >> 16 & 0xFF)) / 2 << 16) | (((a >> 8 & 0xFF) + (b >> 8 & 0xFF)) / 2 << 8) | (((a & 0xFF) + (b & 0xFF)) / 2);
+
+        /// <summary>Mesh Sketch preview curves (immediate mode: few hundred points).</summary>
+        private static void DrawPolylines(List<Vec3[]> lines, int color, float width, bool onTop)
+        {
+            if (lines.Count == 0) return;
+            if (onTop) Gl.glDisable(Gl.GL_DEPTH_TEST); else Gl.glEnable(Gl.GL_DEPTH_TEST);
+            Gl.glLineWidth(width);
+            Gl.Color(color, 255);
+            foreach (var l in lines)
+            {
+                Gl.glBegin(Gl.GL_LINE_STRIP);
+                foreach (var p in l) Gl.glVertex3d(p.X, p.Y, p.Z);
+                Gl.glEnd();
+            }
+            Gl.glEnable(Gl.GL_DEPTH_TEST);
+        }
+
+        /// <summary>Rectangle / Freehand outline while dragging.</summary>
+        private void DrawShapeOutline()
+        {
+            var o = _s.ShapeOutline;
+            if (o.Count < 2) return;
+            Gl.glDisable(Gl.GL_DEPTH_TEST);
+            Gl.glLineWidth(1.5f);
+            Gl.Color(_s.Removing || _s.RemoveMode ? 0xFF4040 : 0xFFFFFF, 255);
+            Gl.glBegin(Gl.GL_LINE_LOOP);
+            foreach (var p in o) Gl.glVertex3d(p.X, p.Y, p.Z);
+            Gl.glEnd();
+            Gl.glEnable(Gl.GL_DEPTH_TEST);
         }
 
         private void DrawCursor(double pixelSize)
@@ -238,7 +274,14 @@ namespace MeshFit.SolidWorks
                     else
                     {
                         byte a = (byte)(o == active?.Id ? 200 : 140);
-                        PutColor(_paintC, i * 3 + k, (byte)(reg.Color >> 16), (byte)(reg.Color >> 8), (byte)reg.Color, a);
+                        int col = reg.Color;
+                        if (_s.WizardActive)
+                        {
+                            // Wizard input regions light up (blended toward amber); the rest step back.
+                            if (_s.WizardRegions.Contains(o)) { col = Blend(col, 0xFFC82E); a = 235; }
+                            else a = 60;
+                        }
+                        PutColor(_paintC, i * 3 + k, (byte)(col >> 16), (byte)(col >> 8), (byte)col, a);
                     }
                 }
                 i++;

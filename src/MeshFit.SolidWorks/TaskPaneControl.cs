@@ -17,7 +17,7 @@ namespace MeshFit.SolidWorks
     /// MeshFit task pane. A fixed header holds what is used constantly (guidance, undo/redo, tools,
     /// add/remove mode); the scrolling body holds the mesh, region list, fitting, surfaces and settings.
     /// </summary>
-    internal sealed class TaskPaneControl : UserControl
+    internal sealed partial class TaskPaneControl : UserControl
     {
         private const int W = 290;
         private readonly SwAddin _addin;
@@ -130,9 +130,9 @@ namespace MeshFit.SolidWorks
             };
             header.Controls.Add(_guide);
 
-            // Main entry: the Reverse Engineer PropertyManager. ✔ creates the feature; the pushpin keeps it open.
-            _reverse = Btn("Reverse Engineer…", () => Execute(Cmd.ReverseEngineer),
-                "Open the Reverse Engineer PropertyManager: paint a feature, fit it, ✔ OK creates it and moves on to the next feature");
+            // Main entry: Region Groups mode (Auto Segment + region editing), then the modeling wizards on the ribbon.
+            _reverse = Btn("Region Groups…", () => Execute(Cmd.RegionGroups),
+                "Region Groups mode: Auto Segment the scan into regions and fix them. Then build features with Surface Primitives, the wizards or Mesh Sketch on the MeshFit tab");
             _reverse.Font = new Font(Font, FontStyle.Bold);
             _stepNext = Btn("Next ▶", () => Execute(Cmd.NextFeature), "Finish this region (hide its surface) and start the next feature");
             header.Controls.Add(Row(_reverse, _stepNext, Btn("Settings…", () => Execute(Cmd.Settings), "Selection, fitting, clean-geometry and freeform settings")));
@@ -174,12 +174,13 @@ namespace MeshFit.SolidWorks
 
             var tools = new[]
             {
-                (PaintTool.None, "Off", "No paint tool: SOLIDWORKS works normally (Esc)."),
-                (PaintTool.SmartFill, "Smart fill", "Click or drag: fills smooth areas up to edges sharper than the angle (and fillets when 'Stop at fillets' is on)."),
-                (PaintTool.Brush, "Brush", "Drag to paint inside the brush circle. Ctrl+click paints a straight line from the last painted point (view direction), blending the brush size. Ctrl/Shift + wheel resizes."),
-                (PaintTool.FillConnected, "Shell", "Click to fill a whole connected piece of mesh."),
-                (PaintTool.Fillet, "Fillet", "Click a fillet or blend (constant or variable radius) to select the whole band, detected from curvature."),
-                (PaintTool.PickRegion, "Pick", "Click painted triangles to make their region active."),
+                (PaintTool.None, "Off", "No selection mode: SOLIDWORKS works normally (Esc)."),
+                (PaintTool.SmartFill, "Flood", "Flood Fill: click or drag; fills smooth areas up to edges sharper than the angle (and fillets when 'Stop at fillets' is on)."),
+                (PaintTool.Brush, "Brush", "Paint Brush: drag to paint inside the circle. Ctrl+click paints a straight line from the last painted point (view direction), blending the brush size. Ctrl/Shift + wheel resizes."),
+                (PaintTool.Rectangle, "Rect", "Rectangle: drag a box to select the visible triangles inside it."),
+                (PaintTool.Freehand, "Lasso", "Freehand: drag an outline to select the visible triangles inside it."),
+                (PaintTool.Fillet, "Fillet", "Fillet Band: click a fillet or blend (constant or variable radius) to select the whole band, detected from curvature."),
+                (PaintTool.PickRegion, "Pick", "Pick Region: click a region to make it active (or add it to the open wizard)."),
             };
             var toolRow = Row();
             foreach (var (tool, text, tip) in tools)
@@ -627,11 +628,18 @@ namespace MeshFit.SolidWorks
                         break;
                     case Cmd.NextFeature: NextFeature(); break;
                     case Cmd.ReverseEngineer:
-                        // Without a mesh, load one first and open the page afterwards.
-                        if (!S.HasMesh) { LoadMesh(() => _addin.ShowReverseEngineerPage()); break; }
-                        if (S.Tool == PaintTool.None) SetTool(PaintTool.SmartFill);
-                        _addin.ShowReverseEngineerPage();
+                    case Cmd.RegionGroups:
+                        // Without a mesh, import one first and open the mode afterwards.
+                        if (!S.HasMesh) { LoadMesh(() => _addin.ShowPage(_addin.RegionGroups)); break; }
+                        _addin.ShowPage(_addin.RegionGroups);
                         break;
+                    case Cmd.SurfacePrimitives: OpenWizard(WizardKind.Primitives); break;
+                    case Cmd.ExtrusionWizard: OpenWizard(WizardKind.Extrusion); break;
+                    case Cmd.RevolutionWizard: OpenWizard(WizardKind.Revolution); break;
+                    case Cmd.MeshFitWizard: OpenWizard(WizardKind.MeshFit); break;
+                    case Cmd.MeshSketch: if (NeedMesh()) _addin.ShowPage(_addin.MeshSketch); break;
+                    case Cmd.ToolRectangle: SetTool(PaintTool.Rectangle); break;
+                    case Cmd.ToolFreehand: SetTool(PaintTool.Freehand); break;
                     case Cmd.ShowRegions:
                         _addin.ShowTaskPane();
                         _tabs.SelectedIndex = 0;
@@ -1066,23 +1074,6 @@ namespace MeshFit.SolidWorks
             SetStatus("Deleted. Use Undo to bring it back.");
         });
 
-        /// <summary>✔ OK on the Reverse Engineer page: create the feature, optionally start the next region.</summary>
-        internal void CreateForPage(ReverseEngineerPage.CreateKind kind, bool next, Action<bool> done)
-        {
-            void Finish(bool ok)
-            {
-                if (ok && next) NextFeature();
-                done?.Invoke(ok);
-            }
-            if (_busy) { SetStatus("Busy — press Esc to cancel."); done?.Invoke(false); return; }
-            try
-            {
-                if (kind == ReverseEngineerPage.CreateKind.Surface) Finish(CreateSurfaces(Active(), autoNext: false));
-                else CreateSketched(kind == ReverseEngineerPage.CreateKind.Revolve, autoNext: false, finished: Finish);
-            }
-            catch (Exception ex) { SetStatus("Error: " + ex.Message); done?.Invoke(false); }
-        }
-
         // ================================================================== right-click paint menu
 
         /// <summary>Right click in the graphics area while painting: everything for the brush, the region and the next step.</summary>
@@ -1106,9 +1097,10 @@ namespace MeshFit.SolidWorks
             // Paint tools and their settings
             foreach (var (tool, text, cmd) in new[]
             {
-                (PaintTool.SmartFill, "Smart fill", Cmd.ToolSmartFill), (PaintTool.Brush, "Brush", Cmd.ToolBrush),
-                (PaintTool.Fillet, "Fillet band", Cmd.ToolFillet), (PaintTool.FillConnected, "Whole shell", Cmd.ToolFillShell),
-                (PaintTool.PickRegion, "Pick region", Cmd.ToolPick),
+                (PaintTool.SmartFill, "Flood Fill", Cmd.ToolSmartFill), (PaintTool.Brush, "Paint Brush", Cmd.ToolBrush),
+                (PaintTool.Rectangle, "Rectangle", Cmd.ToolRectangle), (PaintTool.Freehand, "Freehand", Cmd.ToolFreehand),
+                (PaintTool.Fillet, "Fillet Band", Cmd.ToolFillet), (PaintTool.FillConnected, "Whole Shell", Cmd.ToolFillShell),
+                (PaintTool.PickRegion, "Pick Region", Cmd.ToolPick),
             })
                 Item(m.Items, text, () => SetTool(tool), cmd, S.Tool == tool);
             Item(m.Items, "Remove (unselect)", () => Execute(Cmd.ToggleMode), Cmd.ToggleMode, S.RemoveMode, "Tools unselect instead of paint (hold Shift for a temporary switch)");
@@ -1161,14 +1153,20 @@ namespace MeshFit.SolidWorks
                 var it = Item(type.DropDownItems, rq.ToString(), () => { if (S.ActiveRegion != null) { S.ActiveRegion.Request = rq; S.RaiseChanged(); } }, null, a?.Request == rq);
                 it.Image = ShapeIcons.Draw(rq);
             }
-            Item(m.Items, "Fit + grow", () => Execute(Cmd.FitAndGrow), Cmd.FitAndGrow);
-            var create = Item(m.Items, "Create", null, Cmd.CreateSurface);
+            Item(m.Items, "Extend To Similar (fit + grow)", () => Execute(Cmd.FitAndGrow), Cmd.FitAndGrow);
+            var model = Item(m.Items, "Model", null, Cmd.SurfacePrimitives);
+            Item(model.DropDownItems, "Surface Primitives…", () => Execute(Cmd.SurfacePrimitives), Cmd.SurfacePrimitives);
+            Item(model.DropDownItems, "Extrusion Wizard…", () => Execute(Cmd.ExtrusionWizard), Cmd.ExtrusionWizard);
+            Item(model.DropDownItems, "Revolution Wizard…", () => Execute(Cmd.RevolutionWizard), Cmd.RevolutionWizard);
+            Item(model.DropDownItems, "Mesh Fit…", () => Execute(Cmd.MeshFitWizard), Cmd.MeshFitWizard);
+            Item(model.DropDownItems, "Mesh Sketch…", () => Execute(Cmd.MeshSketch), Cmd.MeshSketch);
+            var create = Item(m.Items, "Quick create (active region)", null, Cmd.CreateSurface);
             Item(create.DropDownItems, "Fitted surface", () => Execute(Cmd.CreateSurface), Cmd.CreateSurface);
             Item(create.DropDownItems, "Sketch + extruded surface", () => Execute(Cmd.CreateExtrude), Cmd.CreateExtrude);
             Item(create.DropDownItems, "Sketch + revolved surface", () => Execute(Cmd.CreateRevolve), Cmd.CreateRevolve);
             Item(m.Items, "Next feature", () => Execute(Cmd.NextFeature), Cmd.NextFeature);
             m.Items.Add(new ToolStripSeparator());
-            Item(m.Items, "Reverse Engineer…", () => Execute(Cmd.ReverseEngineer), Cmd.ReverseEngineer);
+            Item(m.Items, "Region Groups…", () => Execute(Cmd.RegionGroups), Cmd.RegionGroups);
             Item(m.Items, "Stop painting (Esc)", () => SetTool(PaintTool.None), Cmd.ToolOff);
             m.Show(screen);
         }
@@ -1239,12 +1237,13 @@ namespace MeshFit.SolidWorks
             Run(() => { Report("Reading the facets of the SOLIDWORKS bodies", null); _addin.UseBodies(); return "Mesh taken from SOLIDWORKS bodies."; }, title: "Reading bodies");
 
         /// <summary>Analyse the region as an extrusion / revolution (worker thread), then build sketch + feature.</summary>
-        private void CreateSketched(bool revolve, bool autoNext = true, Action<bool> finished = null)
+        private void CreateSketched(bool revolve, bool autoNext = true, Action<bool> finished = null, List<Region> regions = null)
         {
-            if (!NeedRegion()) { finished?.Invoke(false); return; }
+            if (regions == null ? !NeedRegion() : regions.Count == 0 || !NeedMesh()) { finished?.Invoke(false); return; }
             ApplyFitSettings();
-            var r = S.ActiveRegion;
-            var tris = S.Regions.TriangleListOf(r.Id);
+            // Several regions (wizard input) make one feature: the first one owns it.
+            var r = regions?[0] ?? S.ActiveRegion;
+            var tris = regions == null ? S.Regions.TriangleListOf(r.Id) : regions.SelectMany(x => S.Regions.TriangleListOf(x.Id)).ToList();
             double tol = S.FitOptions.Tolerance, snap = (double)_snapDeg.Value;
             var hint = r.Fit?.Surface;
             SketchProfile prof = null;
@@ -1273,6 +1272,7 @@ namespace MeshFit.SolidWorks
                                          : _addin.CreateExtrudedSurface(r, (ExtrusionProfile)prof, Report);
                     _result.Text = msg + Environment.NewLine + "Profile: " + prof.Describe(1000, "mm");
                     ok = r.FeatureName != null;
+                    if (ok && regions != null) foreach (var x in regions) { x.FeatureName = r.FeatureName; x.SurfaceHidden = false; }
                     if (autoNext) AfterCreate();
                     return msg;
                 }, title: revolve ? "Creating revolved surface" : "Creating extruded surface");
@@ -1311,7 +1311,9 @@ namespace MeshFit.SolidWorks
 
         // ================================================================== fitting
 
-        private void FitRegions(List<Region> regions)
+        private void FitRegions(List<Region> regions) => FitRegions(regions, null);
+
+        private void FitRegions(List<Region> regions, Action then)
         {
             if (!NeedMesh()) return;
             regions = regions.Where(r => r.TriangleCount > 0).ToList();
@@ -1329,7 +1331,7 @@ namespace MeshFit.SolidWorks
                     catch (Exception ex) { msgs.Add($"{r.Name}: {ex.Message}"); }
                 }
                 return string.Join("; ", msgs);
-            }, background: true, title: "Fitting");
+            }, background: true, title: "Fitting", then: then);
         }
 
         private void FitAndGrow()

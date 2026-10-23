@@ -52,10 +52,12 @@ namespace MeshFit.SolidWorks
                                 g.DrawEllipse(red, 7, 7, 6, 6);
                                 break;
                             case Cmd.CreateExtrude: // profile + arrow
+                            case Cmd.ExtrusionWizard:
                                 g.DrawArc(pen, 2, 8, 10, 10, 180, 90);
                                 g.DrawLine(pen, 7, 8, 16, 8); g.DrawLine(pen, 10, 14, 18, 4); g.DrawLine(pen, 18, 4, 14, 5); g.DrawLine(pen, 18, 4, 17, 8);
                                 break;
                             case Cmd.CreateRevolve: // circular arrow around an axis
+                            case Cmd.RevolutionWizard:
                                 g.DrawLine(red, 10, 1, 10, 19);
                                 g.DrawEllipse(pen, 3, 6, 14, 8);
                                 g.FillPolygon(fill, new[] { new PointF(15, 12), new PointF(19, 13), new PointF(16, 16) });
@@ -185,6 +187,37 @@ namespace MeshFit.SolidWorks
                             case Cmd.ShowRegions: // list with colour swatches
                                 g.FillRectangle(Brushes.OrangeRed, 2, 3, 4, 4); g.FillRectangle(Brushes.SeaGreen, 2, 9, 4, 4); g.FillRectangle(Brushes.RoyalBlue, 2, 15, 4, 4);
                                 g.DrawLine(pen, 8, 5, 18, 5); g.DrawLine(pen, 8, 11, 18, 11); g.DrawLine(pen, 8, 17, 18, 17);
+                                break;
+                            case Cmd.RegionGroups: // scan split into coloured regions
+                                g.FillPolygon(Brushes.SteelBlue, new[] { new PointF(2, 3), new PointF(10, 2), new PointF(9, 10), new PointF(2, 11) });
+                                g.FillPolygon(Brushes.SeaGreen, new[] { new PointF(10, 2), new PointF(18, 4), new PointF(17, 11), new PointF(9, 10) });
+                                g.FillPolygon(Brushes.Goldenrod, new[] { new PointF(2, 11), new PointF(9, 10), new PointF(10, 18), new PointF(3, 17) });
+                                g.FillPolygon(Brushes.IndianRed, new[] { new PointF(9, 10), new PointF(17, 11), new PointF(18, 18), new PointF(10, 18) });
+                                break;
+                            case Cmd.MeshSketch: // plane cutting a profile of line + arc
+                                g.DrawPolygon(pen, new[] { new PointF(1, 14), new PointF(6, 6), new PointF(19, 6), new PointF(14, 14) });
+                                g.DrawLine(red, 4, 11, 9, 11); g.DrawArc(red, 7, 6, 8, 10, 180, 90); g.DrawLine(red, 11, 6, 16, 6);
+                                break;
+                            case Cmd.SurfacePrimitives: // cylinder next to a plane
+                                g.FillRectangle(fill, 9, 5, 8, 11); g.FillEllipse(Brushes.LightSteelBlue, 9, 2, 8, 5);
+                                g.DrawEllipse(pen, 9, 2, 8, 5); g.DrawLine(pen, 9, 5, 9, 16); g.DrawLine(pen, 17, 5, 17, 16); g.DrawArc(pen, 9, 13, 8, 5, 0, 180);
+                                g.DrawPolygon(pen, new[] { new PointF(1, 17), new PointF(4, 10), new PointF(8, 10), new PointF(5, 17) });
+                                break;
+                            case Cmd.MeshFitWizard: // freeform patch with a control net
+                                g.FillPolygon(fill, new[] { new PointF(2, 14), new PointF(6, 4), new PointF(18, 3), new PointF(15, 15) });
+                                g.DrawBezier(pen, 2, 14, 6, 10, 11, 17, 15, 15); g.DrawBezier(pen, 6, 4, 10, 1, 14, 6, 18, 3);
+                                g.DrawLine(pen, 2, 14, 6, 4); g.DrawLine(pen, 15, 15, 18, 3);
+                                break;
+                            case Cmd.ToolRectangle: // dashed selection box
+                                using (var dash = new Pen(Color.FromArgb(40, 90, 160), 1.6f) { DashPattern = new[] { 2f, 1.5f } }) g.DrawRectangle(dash, 2, 4, 16, 12);
+                                break;
+                            case Cmd.ToolFreehand: // lasso
+                                using (var dash = new Pen(Color.FromArgb(40, 90, 160), 1.6f) { DashPattern = new[] { 2f, 1.5f } })
+                                    g.DrawClosedCurve(dash, new[] { new PointF(3, 9), new PointF(9, 3), new PointF(17, 6), new PointF(15, 14), new PointF(7, 15) });
+                                g.DrawLine(pen, 7, 15, 5, 19);
+                                break;
+                            case Cmd.ToggleCurvatureMap: // grey to red band
+                                using (var lg = new LinearGradientBrush(new PointF(2, 0), new PointF(18, 0), Color.Gray, Color.OrangeRed)) g.FillRectangle(lg, 2, 5, 16, 10);
                                 break;
                             default:
                                 g.FillEllipse(fill, 4, 4, 12, 12);

@@ -732,6 +732,158 @@ namespace MeshFit.Core.Analysis
             return best;
         }
 
+        // ------------------------------------------------------------------ polylines (mesh sketch)
+
+        /// <summary>
+        /// Fewest lines and arcs within tolerance of an ordered polyline, e.g. a mesh section ("Auto Sketch").
+        /// Closed loops that are round within tolerance become a full circle (two half arcs). Each segment is
+        /// refitted to the polyline points it covers, with tangent joints made exactly tangent.
+        /// </summary>
+        public static List<ProfileSegment> FitPolyline(List<(double x, double y)> pts, bool closed, double tol,
+                                                       out double maxDeviation, out double rmsDeviation)
+        {
+            if (pts.Count < 2) throw new InvalidOperationException("The section is too short to sketch.");
+            List<ProfileSegment> segs = null;
+            if (closed && pts.Count >= 8) segs = FullCircle(pts, tol);
+            if (segs == null)
+            {
+                var path = closed ? RotateToCorner(pts) : pts;
+                var simple = Simplify(path, closed, 0.3 * tol);
+                double spacing = 0;
+                for (int i = 1; i < pts.Count; i++) spacing += Dist(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+                spacing /= Math.Max(1, pts.Count - 1);
+                var index = new CloudIndex(path, Math.Max(3 * spacing, tol));
+                segs = Refine(LinesAndArcs(simple, closed, tol), path, index, tol, closed);
+                segs = MergeRedundant(segs, path, tol, closed);
+            }
+            double max = 0, sum2 = 0;
+            foreach (var (x, y) in pts)
+            {
+                double dd = segs.Min(sg => DistanceToSegment(sg, x, y));
+                max = Math.Max(max, dd); sum2 += dd * dd;
+            }
+            maxDeviation = max;
+            rmsDeviation = Math.Sqrt(sum2 / pts.Count);
+            return segs;
+        }
+
+        /// <summary>Unit tangent at the start of a segment, in the direction of travel.</summary>
+        public static (double x, double y) StartTangent(ProfileSegment s) => Tangent(s, s.X0, s.Y0);
+
+        /// <summary>Unit tangent at the end of a segment, in the direction of travel.</summary>
+        public static (double x, double y) EndTangent(ProfileSegment s) => Tangent(s, s.X1, s.Y1);
+
+        private static (double x, double y) Tangent(ProfileSegment s, double px, double py)
+        {
+            if (!s.IsArc)
+            {
+                double dx = s.X1 - s.X0, dy = s.Y1 - s.Y0, l = Dist(dx, dy);
+                return l < 1e-15 ? (1, 0) : (dx / l, dy / l);
+            }
+            double rx = px - s.Cx, ry = py - s.Cy, r = Dist(rx, ry);
+            if (r < 1e-15) return (1, 0);
+            return s.CounterClockwise ? (-ry / r, rx / r) : (ry / r, -rx / r);
+        }
+
+        /// <summary>Angle (radians) between the end tangent of <paramref name="a"/> and the start tangent of <paramref name="b"/>.</summary>
+        public static double JointAngle(ProfileSegment a, ProfileSegment b)
+        {
+            var (ax, ay) = EndTangent(a);
+            var (bx, by) = StartTangent(b);
+            return Math.Acos(Math.Max(-1, Math.Min(1, ax * bx + ay * by)));
+        }
+
+        /// <summary>Two half arcs when the closed polyline is a circle within tolerance (algebraic fit + check).</summary>
+        private static List<ProfileSegment> FullCircle(List<(double x, double y)> p, double tol)
+        {
+            // Kåsa fit: x² + y² + D x + E y + F = 0.
+            double mx = p.Average(q => q.x), my = p.Average(q => q.y);
+            var a = new double[3, 3];
+            var b = new double[3];
+            foreach (var (x0, y0) in p)
+            {
+                double x = x0 - mx, y = y0 - my, z = -(x * x + y * y);
+                double[] row = { x, y, 1 };
+                for (int i = 0; i < 3; i++) { b[i] += row[i] * z; for (int j = 0; j < 3; j++) a[i, j] += row[i] * row[j]; }
+            }
+            double[] sol;
+            try { sol = LinearAlgebra.SolveSymmetric(a, b); } catch { return null; }
+            double cx = -sol[0] / 2, cy = -sol[1] / 2, r2 = cx * cx + cy * cy - sol[2];
+            if (!(r2 > 0)) return null;
+            double r = Math.Sqrt(r2);
+            foreach (var (x, y) in p) if (Math.Abs(Dist(x - mx - cx, y - my - cy) - r) > tol) return null;
+            cx += mx; cy += my;
+            return new List<ProfileSegment>
+            {
+                new ProfileSegment { IsArc = true, X0 = cx + r, Y0 = cy, X1 = cx - r, Y1 = cy, Cx = cx, Cy = cy, Radius = r, CounterClockwise = true },
+                new ProfileSegment { IsArc = true, X0 = cx - r, Y0 = cy, X1 = cx + r, Y1 = cy, Cx = cx, Cy = cy, Radius = r, CounterClockwise = true },
+            };
+        }
+
+        /// <summary>Starts a closed loop at its sharpest turn, so no line or arc is split by the seam.</summary>
+        private static List<(double x, double y)> RotateToCorner(List<(double x, double y)> p)
+        {
+            int n = p.Count, k = Math.Max(1, Math.Min(6, n / 8)), best = 0;
+            double bestTurn = -1;
+            for (int i = 0; i < n; i++)
+            {
+                var a = p[(i - k + n) % n]; var c = p[i]; var b = p[(i + k) % n];
+                double ux = c.x - a.x, uy = c.y - a.y, vx = b.x - c.x, vy = b.y - c.y;
+                double lu = Dist(ux, uy), lv = Dist(vx, vy);
+                if (lu < 1e-15 || lv < 1e-15) continue;
+                double turn = Math.Acos(Math.Max(-1, Math.Min(1, (ux * vx + uy * vy) / (lu * lv))));
+                if (turn > bestTurn) { bestTurn = turn; best = i; }
+            }
+            return p.Skip(best).Concat(p.Take(best)).ToList();
+        }
+
+        /// <summary>Douglas–Peucker simplification (keeps the end points; a closed loop keeps its first point).</summary>
+        private static List<(double x, double y)> Simplify(List<(double x, double y)> p, bool closed, double eps)
+        {
+            var q = new List<(double x, double y)>(p);
+            if (closed) q.Add(q[0]);
+            var keep = new bool[q.Count];
+            keep[0] = keep[q.Count - 1] = true;
+            var stack = new Stack<(int, int)>();
+            if (closed)
+            {
+                // Split the loop at the point farthest from the start so both halves are proper chords.
+                int far = 0; double fd = -1;
+                for (int i = 1; i < q.Count - 1; i++) { double dd = Dist(q[i].x - q[0].x, q[i].y - q[0].y); if (dd > fd) { fd = dd; far = i; } }
+                keep[far] = true;
+                stack.Push((0, far)); stack.Push((far, q.Count - 1));
+            }
+            else stack.Push((0, q.Count - 1));
+            while (stack.Count > 0)
+            {
+                var (i, j) = stack.Pop();
+                if (j - i < 2) continue;
+                double ax = q[i].x, ay = q[i].y, dx = q[j].x - ax, dy = q[j].y - ay, len = Dist(dx, dy);
+                int idx = -1; double dmax = eps;
+                for (int k = i + 1; k < j; k++)
+                {
+                    double px = q[k].x - ax, py = q[k].y - ay;
+                    double dd = len < 1e-15 ? Dist(px, py) : Math.Abs(px * dy - py * dx) / len;
+                    if (dd > dmax) { dmax = dd; idx = k; }
+                }
+                if (idx < 0) continue;
+                keep[idx] = true;
+                stack.Push((i, idx)); stack.Push((idx, j));
+            }
+            // Arcs need interior points: also keep the real polyline point halfway between kept vertices.
+            var kept = new List<int>();
+            for (int i = 0; i < q.Count; i++) if (keep[i]) kept.Add(i);
+            var dense = new List<(double x, double y)>();
+            for (int k = 0; k + 1 < kept.Count; k++)
+            {
+                int i = kept[k], j = kept[k + 1];
+                dense.Add(q[i]);
+                if (j - i >= 2) dense.Add(q[(i + j) / 2]);
+            }
+            if (!closed) dense.Add(q[q.Count - 1]);
+            return dense;
+        }
+
         /// <summary>
         /// Fewest lines and arcs (consecutive, sharing end points) within tolerance of the ordered points,
         /// by dynamic programming over break points. Lines win ties.

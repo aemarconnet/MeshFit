@@ -11,6 +11,7 @@ namespace MeshFit.SolidWorks
         NewRegion, FillIslands, GrowRing, ShrinkRing, ClearRegion, CleanUp, Optimize, ApplySuggestion,
         BrushBigger, BrushSmaller,
         Fit, FitAndGrow, CreateSurface, HideSurfaces, ShowSurfaces,
-        CreateExtrude, CreateRevolve, NextFeature, StepPaint
+        CreateExtrude, CreateRevolve, NextFeature, StepPaint,
+        ReverseEngineer, LoadMesh, UseBodies, ExportIges, SaveProject, OpenProject, Settings
     }
 }

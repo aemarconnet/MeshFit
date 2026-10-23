@@ -79,6 +79,8 @@ namespace MeshFit.SolidWorks
                 ((SldWorks)_app).ActiveModelDocChangeNotify += OnActiveDocChanged;
                 try { AddContextMenus(); }
                 catch (Exception ex) { Trace.WriteLine("MeshFit context menu: " + ex); }
+                try { AddRibbon(cookie); }
+                catch (Exception ex) { Trace.WriteLine("MeshFit ribbon: " + ex); }
                 return true;
             }
             catch (Exception ex)
@@ -94,6 +96,7 @@ namespace MeshFit.SolidWorks
             {
                 ((SldWorks)_app).ActiveModelDocChangeNotify -= OnActiveDocChanged;
                 RemoveContextMenus();
+                RemoveRibbon();
                 Suggestions?.Dispose();
                 Unhook();
                 _pane?.DeleteView();

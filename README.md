@@ -106,22 +106,65 @@ your own installation instead, run:
 dotnet build src/MeshFit.SolidWorks -c Release -p:SolidWorksInteropDir="C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist"
 ```
 
-## The feature loop
+## The feature loop: MeshFit tab → Reverse Engineer
 
-The header has a step bar that walks through each feature to reverse engineer. The current step is
-highlighted.
+MeshFit adds a **MeshFit** tab to the CommandManager ribbon with these groups:
 
-1. **① Paint.** Selects Smart fill. Click or drag on the feature.
-2. **② Fit + grow.** Fits the region and grows it over its surface.
-3. **③ Create**, one of:
-   - **Surface:** a true plane, cylinder, cone, sphere or torus, or a B-spline.
-   - **Extrude:** an editable sketch of lines and arcs plus an extruded surface.
-   - **Revolve:** an editable sketch of lines and arcs plus a revolved surface.
-4. **④ Next ▶.** Hides the finished surface, starts a new region and goes back to painting.
+- **Mesh:** Reverse Engineer, Load Mesh, Mesh Body and Position Mesh.
+- **Selection and analysis:** Optimize Selection, Measure Fillet, Boundary Curves, Accuracy and
+  Zebra.
+- **Output and files:** Hide/Show Surfaces, Export IGES, Save/Open Project, Settings and Unload
+  Mesh.
 
-With *After Create: hide the surface and start the next feature* (Mesh tab → Settings, on by
-default), step 4 runs automatically after each Create. The same steps are on the right-click
-context toolbar.
+**Reverse Engineer** opens a PropertyManager that works like a native SOLIDWORKS feature. Its
+message box at the top always says what to do next. It has these groups:
+
+1. **Feature.** Pick the region, or create or delete one.
+2. **Paint.** Choose Smart fill, Brush, Fillet, Shell, Pick or Off. You can also:
+   - Switch to **Remove** mode.
+   - Set the brush **diameter** and the smart-fill **angle**.
+   - Use **Fill islands**, **Clean up**, and **Grow / Shrink edge**.
+3. **Surface.** Choose the type with the shape buttons: Auto, Plane, Sphere, Cylinder, Cone, Torus
+   or Freeform. You can also:
+   - Set the **tolerance**.
+   - Turn **Clean geometry** and **Stop at fillets** on or off.
+   - Click **Fit + grow** to fit. The result appears below the button.
+4. **Create.** Choose **Fitted surface**, **Sketch + extruded surface** or **Sketch + revolved
+   surface**.
+5. **Display.** Show or hide the deviation map, curvature, surface preview and mesh.
+
+**✔ OK** creates the feature. With *Continue with the next feature* checked (the default), it then:
+
+1. Hides the new surface.
+2. Starts a new region.
+3. Reopens the page, so you keep going feature by feature, as with Fillet.
+
+**✖ Cancel** leaves without creating anything. **Undo / Redo** in the page title bar undo paint
+steps. **Esc** cancels a running fit.
+
+The task pane is now a companion. It has the region list, the progress strip, the deviation legend
+and readout, and the reports. Its **Next ▶** button and the right-click context toolbar give the
+same steps outside the PropertyManager.
+
+### Clean geometry
+
+With *Clean geometry* on, every fit is refined toward the design intent the scan still supports. A
+constraint is kept only if the 95th-percentile deviation stays within tolerance. The refinements,
+in order:
+
+- **Snap directions.** Axes and normals within 1° of X/Y/Z, or of an already fitted feature, become
+  exactly parallel or perpendicular.
+- **Shared axes and tangency.**
+  - Cylinders, cones and tori become coaxial with fitted neighbours.
+  - Spheres become concentric with fitted neighbours.
+  - A fillet cylinder is made tangent to the two planes it blends.
+- **Round dimensions.** Radii, cone angles, plane offsets and axis positions are rounded to the
+  coarsest step the data agrees with: 1, 0.5, 0.1, 0.05 or 0.01 mm, and 1°, 0.5°, 0.1° or 0.05°.
+
+The fit report lists what was applied, e.g. `axis ∥ Z; R → 25 mm`. Freeform surfaces use the
+fairest smoothing and fewest control points that still meet the tolerance.
+
+You can toggle each refinement and set the snap angle in **Settings…** (ribbon or task pane).
 
 ### Sketch-based surfaces (Extrude / Revolve)
 
@@ -147,22 +190,27 @@ a wheel-arch lip:
 
 ## Task pane layout
 
-- **Header**, visible on every tab:
+- **Header:**
   - The next-step guide.
+  - **Reverse Engineer…**, **Next ▶** and **Settings…**.
   - **Undo / Redo**.
   - The **active region** dropdown.
-  - The paint tools.
-  - **+ Add / − Remove**.
-  - Brush **Ø** and smart-fill angle.
-  - The deviation legend.
   - A **progress strip** while anything runs: task, current step, % bar and elapsed seconds, with
     **Cancel (Esc)**. Long operations that block SOLIDWORKS also show progress in its status bar.
+  - The deviation legend, the hover readout and the status line.
 - **Tabs:**
-  - **Mesh:** load, use bodies, **Unload mesh**, **Position mesh…**, project and settings.
-  - **Regions:** region list and selection tools.
+  - **Regions:** paint tools, Add/Remove, brush Ø, region list and selection tools.
+  - **Mesh:** load, use bodies, **Unload mesh**, **Position mesh…** and project files.
   - **Fit:** surface type, tolerance, Fit + grow, report and suggestions.
   - **Fillets:** fillet detection, measurement and 3D sketch curves.
   - **Output:** SOLIDWORKS surfaces, hide/show, accuracy analyzer, IGES.
+- **Settings…** opens a small window with these settings:
+  - Selection behaviour and auto-fill of islands.
+  - Clean geometry.
+  - Sketch snapping.
+  - Surface extension.
+  - Freeform control points and smoothing.
+  - Curvature scale.
 - **Esc** cancels the running job: Fit + grow, Fit all, Optimize, curvature analysis, the accuracy
   analyzer's exact pass, or surface creation. A cancelled Fit + grow leaves the region unchanged.
   If nothing is running, Esc leaves the paint tool.

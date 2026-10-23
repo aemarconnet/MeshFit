@@ -390,6 +390,11 @@ src/MeshFit.SolidWorks   net48 COM add-in: MeshFit ribbon tab, PropertyManager p
                          Surface Primitives / Extrusion / Revolution / Mesh Fit wizards, Mesh Sketch),
                          task pane, OpenGL overlay, mouse picking, SOLIDWORKS feature creation
 docs/                    workflow-comparison.html: UI comparison with the established tools
+docs/handoff/            handoff for developers / AI agents: goals, history, architecture, algorithms,
+                         SOLIDWORKS integration, crash safety, process, status and backlog
+tools/                   ApiInspector (SOLIDWORKS interop signatures offline), swhelp.py (API help text),
+                         check_callbacks.py (ribbon / menu callback names)
+AGENTS.md, CLAUDE.md     entry point and hard rules for AI agents working on the code
 src/MeshFit.Cli          net8.0 batch tool
 tests/MeshFit.Core.Tests xUnit tests: fitters on synthetic noisy data, NURBS exactness, IO, painting, IGES
 ```

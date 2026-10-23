@@ -177,7 +177,7 @@ footer { font-size: .85rem; color: var(--ink-soft); }
             <td class="now">Clean geometry (snap, coaxial, tangent, round)</td><td class="next">Same, plus sketch relations from Auto Sketch</td></tr>
           <tr><th scope="row">Analyze</th>
             <td>Accuracy Analyzer pane (every mode, live while previewing)</td><td>Deviation analysis in every wizard</td><td>Deviation analysis</td><td>Real-time deviation colours</td><td>Deviation Analysis</td>
-            <td class="now">Accuracy button; deviation map toggle</td><td class="next"><span class="cmd">Accuracy Analyzer</span>; every wizard previews with the deviation map</td></tr>
+            <td class="now">Accuracy button; deviation map toggle</td><td class="next"><span class="cmd">Accuracy Analyzer</span>; Surface Primitives and Mesh Fit preview with the deviation map; the Extrusion and Revolution Wizards draw their profile on the scan</td></tr>
         </tbody>
       </table>
     </div>
@@ -212,7 +212,7 @@ footer { font-size: .85rem; color: var(--ink-soft); }
       <li><h3>No Mesh Sketch</h3><p class="fix"><b>Fix:</b> <i>Mesh Sketch</i> takes a base plane (a SOLIDWORKS plane, a planar face or a planar region) and an offset. It sections the scan, fits lines and arcs, and writes a normal SOLIDWORKS sketch with coincident, tangent, horizontal and vertical relations. Then you extrude or revolve with SOLIDWORKS's own commands.</p></li>
       <li><h3>Ribbon not in workflow order</h3><p class="fix"><b>Fix:</b> Scan → Align → Regions → Sketch → Model → Analyze → Output, left to right, as in Geomagic for SOLIDWORKS.</p></li>
       <li><h3>Missing standard selection shapes</h3><p class="fix"><b>Fix:</b> Rectangle and Freehand (lasso) modes that select front-facing visible triangles only. Paint Brush and Flood Fill keep their behaviour under the familiar names.</p></li>
-      <li><h3>Deviation only on demand</h3><p class="fix"><b>Fix:</b> every wizard's Preview turns on the deviation map for its regions. The Accuracy Analyzer keeps its own command for CAD-vs-scan checks.</p></li>
+      <li><h3>Deviation only on demand</h3><p class="fix"><b>Fix:</b> Preview in Surface Primitives and Mesh Fit turns on the deviation map for their regions. The Extrusion and Revolution Wizards draw the fitted profile on the scan, and Mesh Sketch draws its lines and arcs over the section. The Accuracy Analyzer keeps its own command for CAD-vs-scan checks.</p></li>
     </ol>
   </section>
 
@@ -259,6 +259,12 @@ footer { font-size: .85rem; color: var(--ink-soft); }
       <li><a href="https://www.cati.com/blog/5-essential-tool-sets-for-design-x/">CATI: 5 essential tool sets for Design X</a></li>
     </ul>
     <p class="muted" style="font-size:.88rem">The details for Geomagic for SOLIDWORKS, Mesh2Surface and QUICKSURFACE come from vendor and reseller material. Exact menu labels may differ in current releases.</p>
+  </section>
+
+  <section aria-labelledby="h-status">
+    <span class="eyebrow">Status</span>
+    <h2 id="h-status">What is built</h2>
+    <p>Every "after" item above is implemented on branch <code>ccr-d21e0b16-x4gm1v</code>. The new geometry (mesh sections, Auto Sketch, curvature-aware Auto Segment) is covered by automated tests. The SOLIDWORKS side compiles against the 2024 API but has not yet run inside SOLIDWORKS, so the first session is its real test. Reset the CommandManager once to pick up the new ribbon.</p>
   </section>
 
   <footer>MeshFit · branch ccr-d21e0b16-x4gm1v</footer>

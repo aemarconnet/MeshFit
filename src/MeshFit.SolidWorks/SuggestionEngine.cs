@@ -26,6 +26,9 @@ namespace MeshFit.SolidWorks
         public event Action<Region, List<SelectionCandidate>> Suggested;
         public event Action<bool> RunningChanged;
 
+        /// <summary>Largest region / scan the background suggestions run on.</summary>
+        public const int MaxTriangles = 150000, MaxMeshTriangles = 4000000;
+
         public SuggestionEngine(Session s)
         {
             _s = s;
@@ -58,6 +61,9 @@ namespace MeshFit.SolidWorks
         {
             var r = _s.ActiveRegion;
             if (!_s.HasMesh || r == null || r.TriangleCount < 3) return;
+            // Exploring means several fits in parallel over the whole region and everything it can grow into:
+            // too heavy for very large regions (gigabytes on a multi-million-triangle scan) or while other work runs.
+            if (_s.Busy || _s.WizardActive || r.TriangleCount > MaxTriangles || _s.Mesh.TriangleCount > MaxMeshTriangles) return;
             var fp = Fingerprint(r);
             if (!force && fp == _fingerprint) return;
             _fingerprint = fp;
@@ -72,6 +78,7 @@ namespace MeshFit.SolidWorks
             opt.Request = r.Request;
             var ui = SynchronizationContext.Current;
             SetRunning(true);
+            Guarded.Step($"Suggestions start: '{r.Name}' {r.TriangleCount:N0} triangles");
             Task.Run(() => SelectionOptimizer.Explore(mesh, owners, r.Id, opt, cts.Token, curvature, blend), cts.Token)
                 .ContinueWith(t =>
                 {

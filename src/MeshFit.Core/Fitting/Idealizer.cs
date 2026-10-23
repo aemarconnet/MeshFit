@@ -8,6 +8,14 @@ namespace MeshFit.Core.Fitting
 {
     public sealed class IdealizeOptions
     {
+        public IdealizeOptions Clone()
+        {
+            var c = (IdealizeOptions)MemberwiseClone();
+            c.LengthSteps = (double[])LengthSteps.Clone();
+            c.AngleStepsDeg = (double[])AngleStepsDeg.Clone();
+            return c;
+        }
+
         /// <summary>Acceptable deviation (model units). A constraint is kept only while the fit stays within it.</summary>
         public double Tolerance { get; set; } = 0.1;
         /// <summary>Directions within this angle of a reference are snapped (degrees).</summary>

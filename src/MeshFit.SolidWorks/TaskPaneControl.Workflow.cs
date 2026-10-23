@@ -53,24 +53,39 @@ namespace MeshFit.SolidWorks
             Guard(() =>
             {
                 if (!NeedMesh()) return;
-                List<Region> created = null;
+                if (resegment)
+                {
+                    S.Regions.BeginStroke("Resegment");
+                    foreach (var r in S.Regions.Regions.Where(r => r.FeatureName == null).ToList()) S.Regions.RemoveRegion(r);
+                    S.Regions.EndStroke();
+                    S.RaiseChanged();
+                }
+                // The segmentation reads a snapshot on a worker thread; the regions are created on the UI thread.
+                var mesh = S.Mesh;
+                var owners = (int[])S.Regions.Owners.Clone();
+                var curvature = S.Curvature;
+                PaintTools.Segmentation seg = null;
+                Guarded.Step($"Auto Segment start: {mesh.TriangleCount:N0} triangles, curvature {(curvature != null ? "ready" : "not ready")}");
                 Run(() =>
                 {
-                    if (resegment)
-                    {
-                        S.Regions.BeginStroke("Resegment");
-                        foreach (var r in S.Regions.Regions.Where(r => r.FeatureName == null).ToList()) S.Regions.RemoveRegion(r);
-                        S.Regions.EndStroke();
-                    }
-                    Report(S.Curvature != null ? "Splitting at creases and fillets" : "Splitting at creases (curvature analysis not ready yet)", null);
-                    created = PaintTools.AutoSegment(S.Regions, angleDeg, Math.Max(1, minTriangles), S.Curvature, blendRadius);
+                    Report(curvature != null ? "Splitting at creases and fillets" : "Splitting at creases (curvature analysis not ready yet)", null);
+                    seg = PaintTools.Segment(mesh, owners, angleDeg, Math.Max(1, minTriangles), curvature, blendRadius, true, Token);
+                    return $"{seg.Count} region(s) found.";
+                }, background: true, title: "Auto Segment", then: () =>
+                {
+                    if (S.Mesh != mesh) return;
+                    var created = PaintTools.ApplySegmentation(S.Regions, seg);
+                    Guarded.Step($"Auto Segment created {created.Count} regions");
                     if (S.ActiveRegion == null || S.ActiveRegion.TriangleCount == 0)
                         S.ActiveRegion = created.OrderByDescending(r => r.TriangleCount).FirstOrDefault() ?? S.ActiveRegion;
-                    return $"Auto Segment: {created.Count} region(s)" + (S.Curvature == null ? " (creases only; run it again when the curvature analysis is ready to split at fillets)." : ".");
-                }, title: "Auto Segment");
-                S.RaiseChanged();
-                if (classify && created != null && created.Count > 0)
-                    FitRegions(created, () => SetStatus($"Auto Segment: {created.Count} region(s) classified. Pick regions for Surface Primitives or the wizards."));
+                    S.RaiseChanged();
+                    SetStatus($"Auto Segment: {created.Count} region(s)" + (curvature == null
+                        ? " (creases only; run it again when the curvature analysis is ready to split at fillets)." : "."));
+                    if (classify && created.Count > 0)
+                        FitRegions(created.OrderByDescending(r => r.TriangleCount).ToList(),
+                            () => SetStatus($"Auto Segment: {created.Count} region(s) classified. Pick regions for Surface Primitives or the wizards."),
+                            classifyOnly: true);
+                });
             });
         }
 

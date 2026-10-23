@@ -31,6 +31,31 @@ namespace MeshFit.SolidWorks
             catch { /* never throw from the error path */ }
         }
 
+        /// <summary>
+        /// Breadcrumb before/after a heavy or native step, with the process memory, so a crash that leaves no
+        /// exception behind still shows in the log where it happened.
+        /// </summary>
+        public static void Step(string what)
+        {
+            long mb = 0;
+            int gdi = 0, user = 0;
+            try
+            {
+                using (var p = System.Diagnostics.Process.GetCurrentProcess())
+                {
+                    mb = p.PrivateMemorySize64 >> 20;
+                    gdi = GetGuiResources(p.Handle, 0);
+                    user = GetGuiResources(p.Handle, 1);
+                }
+            }
+            catch { }
+            // Windows allows 10,000 GDI and 10,000 USER handles per process; SOLIDWORKS dies near the limit.
+            Write($"· {what} [{mb:N0} MB, GDI {gdi}, USER {user}]" + (gdi > 8000 || user > 8000 ? "  ⚠ handle count near the Windows limit" : ""));
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern int GetGuiResources(IntPtr hProcess, int uiFlags);
+
         public static void Write(string line)
         {
             try

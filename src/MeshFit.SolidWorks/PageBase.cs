@@ -53,11 +53,14 @@ namespace MeshFit.SolidWorks
             Building = true;
             try
             {
+                _message = null;
+                Guarded.Step(_title + ": building controls");
                 Build();
                 _open = true;
                 Opened();
                 Refresh();
                 Page.Show2(0);
+                Guarded.Step(_title + ": open");
             }
             catch
             {
@@ -160,8 +163,19 @@ namespace MeshFit.SolidWorks
             shown = items;
         }
 
+        // Controls are written only when their value changes: fewer SOLIDWORKS calls, and no echo notifications.
+        protected static void SetChecked(PropertyManagerPageCheckbox c, bool v) { if (c != null && c.Checked != v) c.Checked = v; }
+        protected static void SetChecked(PropertyManagerPageOption c, bool v) { if (c != null && c.Checked != v) c.Checked = v; }
+        protected static void SetValue(PropertyManagerPageNumberbox n, double v) { if (n != null && Math.Abs(n.Value - v) > 1e-12 * Math.Max(1, Math.Abs(v))) n.Value = v; }
+        protected static void SetCaption(PropertyManagerPageLabel l, string t) { if (l != null && l.Caption != t) l.Caption = t; }
+        protected static void SetText(PropertyManagerPageTextbox b, string t) { if (b != null && b.Text != t) b.Text = t; }
+
+        private string _message;
+
         protected void Message(string text)
         {
+            if (text == _message) return;
+            _message = text;
             try
             {
                 Page?.SetMessage3(text, (int)swPropertyManagerPageMessageVisibility.swMessageBoxVisible,
@@ -198,6 +212,7 @@ namespace MeshFit.SolidWorks
 
         public void AfterClose()
         {
+            Guarded.Step($"{_title}: closed (reason {_closeReason})");
             _open = false;
             Page = null;
             bool ok = _closeReason == (int)swPropertyManagerPageCloseReasons_e.swPropertyManagerPageClose_Okay ||

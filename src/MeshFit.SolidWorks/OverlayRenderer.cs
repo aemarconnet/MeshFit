@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using MeshFit.Core.Export;
 using MeshFit.Core.Fitting;
@@ -19,6 +20,8 @@ namespace MeshFit.SolidWorks
         private bool _dirty = true;
         private float[] _meshV = new float[0]; private byte[] _meshC = new byte[0];
         private float[] _paintV = new float[0]; private byte[] _paintC = new byte[0];
+        private int _paintTris;          // used part of the (reused) paint buffers
+        private int _loggedPaint = -1;
         private float[] _lineV = new float[0]; private byte[] _lineC = new byte[0];
         private object _meshBuiltFor;
         private int _meshVersion;
@@ -37,6 +40,9 @@ namespace MeshFit.SolidWorks
         }
 
         public void Invalidate() => _dirty = true;
+
+        /// <summary>Set after a graphics driver fault: the overlay stays off until the mesh is reloaded.</summary>
+        public bool Failed { get; set; }
 
         /// <summary>The accuracy analyzer result replaces the paint display while it is shown.</summary>
         private bool CadView => _s.ShowCadDeviation && _s.CadResult != null;
@@ -63,7 +69,7 @@ namespace MeshFit.SolidWorks
                 Gl.glPolygonOffset(-1f, -2f);
                 if (_s.ShowMesh || _s.ShowCurvature || CadView) DrawMeshLayer();
                 Gl.glPolygonOffset(-2f, -4f);
-                DrawArrays(Gl.GL_TRIANGLES, _paintV, _paintC);
+                DrawArrays(Gl.GL_TRIANGLES, _paintV, _paintC, _paintTris * 3);
 
                 Gl.glLineWidth(1.5f);
                 DrawArrays(Gl.GL_LINES, _lineV, _lineC);
@@ -88,17 +94,25 @@ namespace MeshFit.SolidWorks
                 if (entry.list != 0) Gl.glDeleteLists(entry.list, 1);
                 uint list = Gl.glGenLists(1);
                 if (list == 0) { _meshLists.Remove(ctx); DrawArrays(Gl.GL_TRIANGLES, _meshV, _meshC); return; }
+                Guarded.Step($"Compiling the mesh display list ({_meshV.Length / 9:N0} triangles)");
                 Gl.glNewList(list, Gl.GL_COMPILE);
                 DrawArrays(Gl.GL_TRIANGLES, _meshV, _meshC);
                 Gl.glEndList();
+                Guarded.Step("Mesh display list ready");
                 _meshLists[ctx] = (list, _meshVersion);
             }
             Gl.glCallList(_meshLists[ctx].list);
         }
 
-        private static void DrawArrays(uint mode, float[] v, byte[] c)
+        /// <summary>Largest draw call: big scans are sent to the driver in batches (whole triangles / lines).</summary>
+        private const int MaxVerticesPerDraw = 1500000;
+
+        private static void DrawArrays(uint mode, float[] v, byte[] c, int vertices = -1)
         {
-            if (v.Length == 0) return;
+            if (vertices < 0) vertices = v.Length / 3;
+            // Never let the driver read past either array.
+            vertices = Math.Min(vertices, Math.Min(v.Length / 3, c.Length / 4));
+            if (vertices <= 0) return;
             var hv = GCHandle.Alloc(v, GCHandleType.Pinned);
             var hc = GCHandle.Alloc(c, GCHandleType.Pinned);
             try
@@ -107,7 +121,10 @@ namespace MeshFit.SolidWorks
                 Gl.glEnableClientState(Gl.GL_COLOR_ARRAY);
                 Gl.glVertexPointer(3, Gl.GL_FLOAT, 0, hv.AddrOfPinnedObject());
                 Gl.glColorPointer(4, Gl.GL_UNSIGNED_BYTE, 0, hc.AddrOfPinnedObject());
-                Gl.glDrawArrays(mode, 0, v.Length / 3);
+                int unit = mode == Gl.GL_TRIANGLES ? 3 : mode == Gl.GL_LINES ? 2 : 1;
+                int step = MaxVerticesPerDraw / unit * unit;
+                for (int first = 0; first < vertices; first += step)
+                    Gl.glDrawArrays(mode, first, Math.Min(step, vertices - first) / unit * unit);
             }
             finally
             {
@@ -255,10 +272,17 @@ namespace MeshFit.SolidWorks
             double tol = _s.FitOptions.Tolerance;
             int count = 0;
             if (_s.ShowRegions && !CadView) for (int t = 0; t < nt; t++) if (set.OwnerOf(t) != RegionSet.None) count++;
-            _paintV = new float[count * 9];
-            _paintC = new byte[count * 12];
+            // Reuse the buffers: on a multi-million-triangle scan they are hundreds of MB, and reallocating them on
+            // every change floods the large-object heap.
+            if (_paintV.Length < count * 9)
+            {
+                int cap = (int)Math.Min(nt, Math.Max(count, (long)(count * 1.25)));
+                _paintV = new float[cap * 9];
+                _paintC = new byte[cap * 12];
+            }
+            if (Math.Abs(count - _loggedPaint) > 1000000) { _loggedPaint = count; Guarded.Step($"Overlay: {count:N0} painted triangles"); }
             int i = 0;
-            for (int t = 0; t < nt; t++)
+            for (int t = 0; t < nt && i < count; t++)
             {
                 int o = set.OwnerOf(t);
                 if (!_s.ShowRegions || CadView || o == RegionSet.None || !regionById.TryGetValue(o, out var reg)) continue;
@@ -286,15 +310,18 @@ namespace MeshFit.SolidWorks
                 }
                 i++;
             }
+            _paintTris = i;
 
-            // Iso-line previews of the fitted surfaces.
+            // Iso-line previews of the fitted surfaces (with hundreds of regions only the ones being worked on).
             var lv = new List<float>();
             var lc = new List<byte>();
             if (_s.ShowPreview)
             {
+                bool many = set.Regions.Count(r => r.Fit?.Surface != null) > 40;
                 foreach (var r in set.Regions)
                 {
                     if (r.Fit?.Surface == null || r.TriangleCount == 0) continue;
+                    if (many && r != active && !_s.WizardRegions.Contains(r.Id)) continue;
                     if (!_previewCache.TryGetValue(r.Id, out var cached) || cached.fit != r.Fit || cached.tris != r.TriangleCount)
                     {
                         cached = (r.Fit, r.TriangleCount, new List<float>(), new List<byte>());

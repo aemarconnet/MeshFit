@@ -70,7 +70,7 @@ namespace MeshFit.SolidWorks
                 _app.SetAddinCallbackInfo2(0, this, cookie);
                 _math = (IMathUtility)_app.GetMathUtility();
                 Renderer = new OverlayRenderer(Session);
-                Session.Changed += Redraw;
+                Session.Changed += QueueRedraw;
                 Suggestions = new SuggestionEngine(Session);
 
                 _pane = _app.CreateTaskpaneView2(WriteIcon(), Title);
@@ -114,7 +114,7 @@ namespace MeshFit.SolidWorks
 
         private int OnActiveDocChanged()
         {
-            if (Session.HasMesh) AttachToActiveView();
+            Guarded.Run("active document changed", () => { if (Session.HasMesh) AttachToActiveView(); });
             return 0;
         }
 
@@ -148,6 +148,17 @@ namespace MeshFit.SolidWorks
             _hook?.Dispose();
             _hook = null;
             _hookedDoc = null;
+        }
+
+        private bool _redrawQueued;
+
+        /// <summary>One repaint per burst of session changes.</summary>
+        private void QueueRedraw()
+        {
+            if (_redrawQueued) return;
+            if (_control == null || !_control.IsHandleCreated) { Redraw(); return; }
+            _redrawQueued = true;
+            _control.BeginInvoke((Action)(() => { _redrawQueued = false; Redraw(); }));
         }
 
         /// <summary>Repaints the hooked view. Safe to call from worker threads (marshals to the UI thread).</summary>
@@ -225,6 +236,7 @@ namespace MeshFit.SolidWorks
             Session.MeshScale = scaleToMetres;
             Session.ShowMesh = true;
             Guarded.Write($"Installing mesh {path}: {mesh.TriangleCount:N0} triangles");
+            Renderer.Failed = false;
             Session.SetMesh(mesh, $"{Path.GetFileName(path)}: {mesh.TriangleCount:N0} triangles");
             ComputeCurvature();
             AttachToActiveView(createPartIfNeeded: true);

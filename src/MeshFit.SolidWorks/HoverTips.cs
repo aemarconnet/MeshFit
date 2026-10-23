@@ -26,13 +26,13 @@ namespace MeshFit.SolidWorks
 
         private void Hook(Control source, Control owner)
         {
-            source.MouseHover += (s, e) =>
+            source.MouseHover += (s, e) => Guarded.Run("tooltip", () =>
             {
-                if (!_text.TryGetValue(owner, out var t) || string.IsNullOrEmpty(t) || !owner.IsHandleCreated) return;
+                if (!_text.TryGetValue(owner, out var t) || string.IsNullOrEmpty(t) || !owner.IsHandleCreated || owner.IsDisposed) return;
                 _tip.Show(t, owner, 0, owner.Height + 2, 12000);
-            };
-            source.MouseLeave += (s, e) => _tip.Hide(owner);
-            source.MouseDown += (s, e) => _tip.Hide(owner);
+            });
+            source.MouseLeave += (s, e) => Guarded.Run("tooltip", () => _tip.Hide(owner));
+            source.MouseDown += (s, e) => Guarded.Run("tooltip", () => _tip.Hide(owner));
         }
 
         public void Dispose() => _tip.Dispose();

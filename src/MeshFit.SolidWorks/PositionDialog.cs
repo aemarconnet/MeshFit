@@ -136,6 +136,7 @@ namespace MeshFit.SolidWorks
                 Btn("Zoom to mesh", () => _addin.ZoomToMesh(), "Zoom the view to the mesh"),
                 Btn("Close", Close, "Close the wizard (the placement stays)")));
             _status = new Label { AutoSize = true, MaximumSize = new Size(440, 0), ForeColor = Color.DimGray };
+            if (_pendingStatus != null) _status.Text = _pendingStatus;
             bottom.Controls.Add(_status);
         }
 
@@ -174,7 +175,13 @@ namespace MeshFit.SolidWorks
             return n;
         }
 
-        private void Say(string msg) => _status.Text = msg;
+        // The status label is created after the tabs; messages from building the tabs are kept until it exists.
+        private string _pendingStatus;
+        private void Say(string msg)
+        {
+            if (_status == null) { _pendingStatus = msg; return; }
+            _status.Text = msg;
+        }
 
         // ------------------------------------------------------------------ actions
 

@@ -59,6 +59,29 @@ namespace MeshFit.Core.Tests
         }
 
         [Fact]
+        public void AutoSegment_ManyRegions_RaisesOneChangeAndAssignsEverything()
+        {
+            // A grid of 20 x 20 raised tiles: hundreds of creases, so hundreds of regions in one step.
+            Vec3 P(double x, double y)
+            {
+                double fx = x - Math.Floor(x), fy = y - Math.Floor(y);
+                bool up = fx > 0.15 && fx < 0.85 && fy > 0.15 && fy < 0.85;
+                return new Vec3(x, y, up ? 0.3 : 0);
+            }
+            var m = TestMeshes.Grid(P, 0, 20, 0, 20, 400, 400, noise: 0.0005);
+            var set = new RegionSet(m);
+            int events = 0;
+            set.Changed += (s, e) => events++;
+            var regions = PaintTools.AutoSegment(set, 30, 20, curvature: null, blendRadius: 0);
+            Assert.True(regions.Count > 300, regions.Count.ToString());
+            Assert.Equal(1, events);
+            Assert.All(Enumerable.Range(0, m.TriangleCount), t => Assert.NotEqual(RegionSet.None, set.OwnerOf(t)));
+            Assert.All(regions, r => Assert.True(r.TriangleCount > 0));
+            set.Undo();
+            Assert.Empty(set.Regions);
+        }
+
+        [Fact]
         public void SmartFill_LeaksOverTangentFillet_UnlessStoppedByCurvature()
         {
             var m = Bracket();

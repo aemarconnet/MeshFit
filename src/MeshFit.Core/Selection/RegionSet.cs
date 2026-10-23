@@ -84,7 +84,8 @@ namespace MeshFit.Core.Selection
             r.Name = name ?? "Region " + r.Id;
             _regions.Add(r);
             RecordAdded(r);
-            OnChanged();
+            // Inside a step (e.g. Auto Segment creating hundreds of regions) one notification comes from EndStroke.
+            if (_stroke == null) OnChanged();
             return r;
         }
 
@@ -108,7 +109,6 @@ namespace MeshFit.Core.Selection
             int idx = _regions.IndexOf(r);
             if (idx >= 0) { _strokeRemoved.Add((r, idx)); _regions.RemoveAt(idx); }
             if (own) EndStroke();
-            else OnChanged();
         }
 
         public IEnumerable<int> TrianglesOf(int regionId)

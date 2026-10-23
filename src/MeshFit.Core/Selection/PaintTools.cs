@@ -318,67 +318,98 @@ namespace MeshFit.Core.Selection
                                                Curvature curvature, double blendRadius, bool absorbSmall = true,
                                                System.Threading.CancellationToken ct = default)
         {
-            var m = set.Mesh;
+            var seg = Segment(set.Mesh, set.Owners, maxEdgeAngleDeg, minTriangles, curvature, blendRadius, absorbSmall, ct);
+            return ApplySegmentation(set, seg);
+        }
+
+        /// <summary>Result of <see cref="Segment"/>: a patch number per triangle (-1 = untouched) and the patch count.</summary>
+        public sealed class Segmentation
+        {
+            public int[] Patch;
+            public int Count;
+        }
+
+        /// <summary>
+        /// The pure part of Auto Segment: reads the mesh and a snapshot of the owners only, so it can run on a
+        /// worker thread. Linear in the number of triangles (small patches are absorbed by a breadth-first pass).
+        /// </summary>
+        public static Segmentation Segment(TriMesh m, int[] owners, double maxEdgeAngleDeg, int minTriangles,
+                                           Curvature curvature, double blendRadius, bool absorbSmall = true,
+                                           System.Threading.CancellationToken ct = default)
+        {
             double cosEdge = Math.Cos(maxEdgeAngleDeg * Math.PI / 180);
             double kBlend = curvature != null && blendRadius > 0 ? 1.0 / blendRadius : double.MaxValue;
             int Class(int t) => curvature != null && curvature.KMax[t] > kBlend ? 1 : 0;
-            var label = new int[m.TriangleCount];
-            var small = new List<int>();
-            var created = new List<Region>();
+            int nt = m.TriangleCount;
+            var patch = new int[nt];
+            for (int t = 0; t < nt; t++) patch[t] = -1;
+            const int Small = -2;
+            int count = 0;
+            var stack = new List<int>();
+            for (int seed = 0; seed < nt; seed++)
+            {
+                if ((seed & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
+                if (patch[seed] != -1 || owners[seed] != RegionSet.None) continue;
+                int cls = Class(seed);
+                stack.Clear();
+                stack.Add(seed);
+                patch[seed] = count;
+                for (int i = 0; i < stack.Count; i++)
+                {
+                    int t = stack[i];
+                    for (int k = 0; k < 3; k++)
+                    {
+                        int nb = m.Neighbors[t * 3 + k];
+                        if (nb < 0 || patch[nb] != -1 || owners[nb] != RegionSet.None) continue;
+                        if (Class(nb) != cls || m.FaceNormals[t].Dot(m.FaceNormals[nb]) < cosEdge) continue;
+                        patch[nb] = count;
+                        stack.Add(nb);
+                    }
+                }
+                if (stack.Count < minTriangles) { foreach (int t in stack) patch[t] = Small; continue; }
+                count++;
+            }
+
+            // Small leftovers join the neighbouring patch they touch: multi-source breadth-first growth from the
+            // kept patches, one ring at a time (each triangle is visited once).
+            var queue = new Queue<int>();
+            for (int t = 0; t < nt; t++)
+            {
+                if (patch[t] < 0) continue;
+                for (int k = 0; k < 3; k++)
+                {
+                    int nb = m.Neighbors[t * 3 + k];
+                    if (nb >= 0 && patch[nb] == Small) { queue.Enqueue(t); break; }
+                }
+            }
+            if (!absorbSmall || count == 0) queue.Clear();
+            while (queue.Count > 0)
+            {
+                int t = queue.Dequeue();
+                for (int k = 0; k < 3; k++)
+                {
+                    int nb = m.Neighbors[t * 3 + k];
+                    if (nb < 0 || patch[nb] != Small) continue;
+                    patch[nb] = patch[t];
+                    queue.Enqueue(nb);
+                }
+            }
+            for (int t = 0; t < nt; t++) if (patch[t] == Small) patch[t] = -1;
+            return new Segmentation { Patch = patch, Count = count };
+        }
+
+        /// <summary>Creates one region per patch (one undo step). Must run on the thread that owns the region set.</summary>
+        public static List<Region> ApplySegmentation(RegionSet set, Segmentation seg)
+        {
+            var created = new List<Region>(seg.Count);
             set.BeginStroke("Auto segment");
             try
             {
-                for (int seed = 0; seed < m.TriangleCount; seed++)
+                for (int i = 0; i < seg.Count; i++) created.Add(set.AddRegion());
+                for (int t = 0; t < seg.Patch.Length; t++)
                 {
-                    if ((seed & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
-                    if (label[seed] != 0 || set.OwnerOf(seed) != RegionSet.None) continue;
-                    int cls = Class(seed);
-                    var patch = new List<int> { seed };
-                    label[seed] = 1;
-                    for (int i = 0; i < patch.Count; i++)
-                    {
-                        int t = patch[i];
-                        for (int k = 0; k < 3; k++)
-                        {
-                            int nb = m.Neighbors[t * 3 + k];
-                            if (nb < 0 || label[nb] != 0 || set.OwnerOf(nb) != RegionSet.None) continue;
-                            if (Class(nb) != cls || m.FaceNormals[t].Dot(m.FaceNormals[nb]) < cosEdge) continue;
-                            label[nb] = 1;
-                            patch.Add(nb);
-                        }
-                    }
-                    if (patch.Count < minTriangles) { small.AddRange(patch); continue; }
-                    var r = set.AddRegion();
-                    foreach (int t in patch) set.Assign(t, r.Id);
-                    created.Add(r);
-                }
-
-                if (absorbSmall && created.Count > 0)
-                {
-                    // Grow the regions into the small leftovers, one ring per pass, by majority of neighbours.
-                    var pending = new HashSet<int>(small);
-                    var votes = new Dictionary<int, int>();
-                    bool changed = true;
-                    while (pending.Count > 0 && changed)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        changed = false;
-                        var assign = new List<(int t, int r)>();
-                        foreach (int t in pending)
-                        {
-                            votes.Clear();
-                            for (int k = 0; k < 3; k++)
-                            {
-                                int nb = m.Neighbors[t * 3 + k];
-                                if (nb < 0) continue;
-                                int o = set.OwnerOf(nb);
-                                if (o == RegionSet.None) continue;
-                                votes[o] = votes.TryGetValue(o, out int c) ? c + 1 : 1;
-                            }
-                            if (votes.Count > 0) assign.Add((t, votes.OrderByDescending(v => v.Value).First().Key));
-                        }
-                        foreach (var (t, r) in assign) { set.Assign(t, r); pending.Remove(t); changed = true; }
-                    }
+                    int p = seg.Patch[t];
+                    if (p >= 0 && set.OwnerOf(t) == RegionSet.None) set.Assign(t, created[p].Id);
                 }
             }
             finally { set.EndStroke(); }

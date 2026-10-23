@@ -138,7 +138,7 @@ namespace MeshFit.SolidWorks
             {
                 int painted = regions.Count(r => r.TriangleCount > 0), fitted = regions.Count(r => r.Fit != null);
                 int bad = regions.Count(r => r.Fit?.Surface != null && r.Fit.Stats.P95 > tol);
-                _summary.Caption = $"{painted} regions · {fitted} classified · {regions.Count(r => r.FeatureName != null)} built" + (bad > 0 ? $" · {bad} ⚠" : "");
+                SetCaption(_summary, $"{painted} regions · {fitted} classified · {regions.Count(r => r.FeatureName != null)} built" + (bad > 0 ? $" · {bad} ⚠" : ""));
             }
             if (_name != null && S.ActiveRegion != null && _name.Text != S.ActiveRegion.Name) _name.Text = S.ActiveRegion.Name;
             _mergeCandidates = regions.Where(r => r != S.ActiveRegion && r.TriangleCount > 0).ToList();
@@ -153,18 +153,18 @@ namespace MeshFit.SolidWorks
                     _mergeIndex = -1;
                 }
             }
-            if (_angle != null) _angle.Value = _angleDeg * Math.PI / 180;
-            if (_blend != null) _blend.Value = S.BlendRadius;
-            if (_minSize != null) _minSize.Value = _minTriangles;
-            if (_classify != null) _classify.Checked = _classifyOn;
-            foreach (var (id, tool, _, _) in Tools) if (_tools.TryGetValue(id, out var o)) o.Checked = S.Tool == tool;
-            if (_remove != null) _remove.Checked = S.RemoveMode;
-            if (_diameter != null) _diameter.Value = S.BrushRadius * 2;
-            if (_floodAngle != null) _floodAngle.Value = S.SmartAngleDeg * Math.PI / 180;
-            if (_showDev != null) _showDev.Checked = S.ShowDeviation;
-            if (_showCurv != null) _showCurv.Checked = S.ShowCurvature;
-            if (_showPrev != null) _showPrev.Checked = S.ShowPreview;
-            if (_showMesh != null) _showMesh.Checked = S.ShowMesh;
+            SetValue(_angle, _angleDeg * Math.PI / 180);
+            SetValue(_blend, S.BlendRadius);
+            SetValue(_minSize, _minTriangles);
+            SetChecked(_classify, _classifyOn);
+            foreach (var (id, tool, _, _) in Tools) if (_tools.TryGetValue(id, out var o)) SetChecked(o, S.Tool == tool);
+            SetChecked(_remove, S.RemoveMode);
+            SetValue(_diameter, S.BrushRadius * 2);
+            SetValue(_floodAngle, S.SmartAngleDeg * Math.PI / 180);
+            SetChecked(_showDev, S.ShowDeviation);
+            SetChecked(_showCurv, S.ShowCurvature);
+            SetChecked(_showPrev, S.ShowPreview);
+            SetChecked(_showMesh, S.ShowMesh);
         }
 
         private void RunAutoSegment() =>
@@ -206,12 +206,13 @@ namespace MeshFit.SolidWorks
         {
             switch ((Id)id)
             {
-                case Id.Classify: _classifyOn = check; break;
-                case Id.Remove: S.RemoveMode = check; Addin.Redraw(); break;
-                case Id.ShowDeviation: S.ShowDeviation = check; break;
-                case Id.ShowCurvature: S.ShowCurvature = check; break;
-                case Id.ShowPreview: S.ShowPreview = check; break;
-                case Id.ShowMesh: S.ShowMesh = check; break;
+                case Id.Classify: _classifyOn = check; return;
+                case Id.Remove: if (S.RemoveMode == check) return; S.RemoveMode = check; break;
+                case Id.ShowDeviation: if (S.ShowDeviation == check) return; S.ShowDeviation = check; break;
+                case Id.ShowCurvature: if (S.ShowCurvature == check) return; S.ShowCurvature = check; break;
+                case Id.ShowPreview: if (S.ShowPreview == check) return; S.ShowPreview = check; break;
+                case Id.ShowMesh: if (S.ShowMesh == check) return; S.ShowMesh = check; break;
+                default: return;
             }
             S.RaiseChanged();
         }

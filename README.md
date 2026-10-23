@@ -398,12 +398,25 @@ Run the tests with `dotnet test`.
 
 ## Troubleshooting
 
-MeshFit writes a log to `%LOCALAPPDATA%\MeshFit\MeshFit.log`. The log records:
-- Startup, mesh loading, and opening each MeshFit page.
+MeshFit writes a log to `%LOCALAPPDATA%\MeshFit\MeshFit.log`. It contains:
 - Every internal error, with its stack trace.
+- A breadcrumb (`·` lines) before and after each heavy step: page builds, Auto Segment, fitting jobs,
+  background suggestions, large paint strokes, overlay rebuilds of big scans, and display-list
+  compiles.
+- With each breadcrumb, the process memory and its GDI/USER handle counts.
 
-Errors inside MeshFit are caught and shown in the status bar instead of closing SOLIDWORKS. If
-something goes wrong, send the end of this file.
+If SOLIDWORKS closes, the last breadcrumb shows what was running. Send the end of the log together
+with SOLIDWORKS's crash report.
+
+Large scans (millions of triangles):
+- Auto Segment and classification run in the background. Esc cancels classification; regions
+  fitted so far keep their type.
+- Classification stops at the simplest surface type within tolerance and does the biggest regions
+  first.
+- Background selection suggestions are off for regions over 150,000 triangles, for scans over
+  4 million, and while a wizard is open.
+- The overlay draws in batches. If the graphics driver faults, the overlay switches off instead of
+  closing SOLIDWORKS. Reloading the mesh turns it back on.
 
 ## Status and known limitations
 

@@ -17,6 +17,11 @@ namespace MeshFit.Core.Fitting
         public bool RejectOutliers { get; set; } = true;
         /// <summary>Points used by the analytic fitters (the region is subsampled above this).</summary>
         public int MaxPoints { get; set; } = 20000;
+        /// <summary>
+        /// Auto only: stop at the first (simplest) type that meets the tolerance instead of fitting every type.
+        /// Much faster for classifying many regions; freeform is only fitted when no analytic type fits.
+        /// </summary>
+        public bool FirstWithinTolerance { get; set; }
         public FreeformOptions Freeform { get; set; } = new FreeformOptions();
 
         /// <summary>Independent copy (fitters may adjust options, so background work uses its own).</summary>
@@ -85,6 +90,11 @@ namespace MeshFit.Core.Fitting
                 {
                     var r = FitKind(kind, pts, nrm, allPts, opt);
                     if (r != null) results.Add(r);
+                    if (opt.FirstWithinTolerance && r != null && r.Stats.P95 <= opt.Tolerance && IsSane(r.Surface, allPts))
+                    {
+                        r.Alternatives = new List<FitResult>(results);
+                        return r;
+                    }
                 }
                 catch (ArgumentException) { /* not enough data for this type */ }
             }

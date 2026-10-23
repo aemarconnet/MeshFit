@@ -135,20 +135,20 @@ namespace MeshFit.SolidWorks
             var sel = Selected();
             double tol = S.FitOptions.Tolerance;
             SetItems(_list, sel.Select(r => RegionGroupsPage.RegionLine(r, tol)).ToArray(), ref _shownList);
-            if (_summary != null) _summary.Caption = sel.Count == 0 ? "No region selected." : $"{sel.Count} region(s), {sel.Sum(r => r.TriangleCount):N0} triangles";
-            if (_tol != null) _tol.Value = tol;
-            if (_clean != null) _clean.Checked = S.Idealize.RoundDimensions || S.Idealize.SnapToAxes;
-            if (_extend != null) _extend.Value = S.ExtentMargin * 100;
+            SetCaption(_summary, sel.Count == 0 ? "No region selected." : $"{sel.Count} region(s), {sel.Sum(r => r.TriangleCount):N0} triangles");
+            SetValue(_tol, tol);
+            SetChecked(_clean, S.Idealize.RoundDimensions || S.Idealize.SnapToAxes);
+            SetValue(_extend, S.ExtentMargin * 100);
             var c = Addin.Control;
             if (c != null)
             {
-                if (_snap != null) _snap.Value = c.SnapDegrees * Math.PI / 180;
-                if (_cpu != null) _cpu.Value = S.FitOptions.Freeform.ControlPointsU;
-                if (_cpv != null) _cpv.Value = S.FitOptions.Freeform.ControlPointsV;
-                if (_smooth != null) _smooth.Value = Math.Round(Math.Log10(Math.Max(1e-14, S.FitOptions.Freeform.Smoothing)));
+                SetValue(_snap, c.SnapDegrees * Math.PI / 180);
+                SetValue(_cpu, S.FitOptions.Freeform.ControlPointsU);
+                SetValue(_cpv, S.FitOptions.Freeform.ControlPointsV);
+                SetValue(_smooth, Math.Round(Math.Log10(Math.Max(1e-14, S.FitOptions.Freeform.Smoothing))));
             }
-            foreach (var (id, req, _) in Shapes) if (_shapes.TryGetValue(id, out var o)) o.Checked = _shape == req;
-            if (_result != null) _result.Caption = _resultText;
+            foreach (var (id, req, _) in Shapes) if (_shapes.TryGetValue(id, out var o)) SetChecked(o, _shape == req);
+            SetCaption(_result, _resultText);
         }
 
         private FitRequest Request => _kind == WizardKind.MeshFit ? FitRequest.Freeform : _shape;

@@ -67,6 +67,8 @@ namespace MeshFit.SolidWorks
         private TextBox _result;
         private DeviationLegend _legend;
         private bool _busy, _updating;
+        private string _regionsShown;
+        private Font _boldFont;
 
         private static readonly (FitRequest req, string tip)[] TypeTips =
         {
@@ -90,7 +92,7 @@ namespace MeshFit.SolidWorks
             S.Changed += () =>
             {
                 if (IsDisposed) return;
-                RefreshAll();
+                QueueRefreshAll();
                 if (InvokeRequired) BeginInvoke((Action)(() => _addin.Suggestions?.Poke())); else _addin.Suggestions?.Poke();
             };
             _addin.BrushResized += () => { if (!IsDisposed) RefreshAll(); };
@@ -720,6 +722,7 @@ namespace MeshFit.SolidWorks
         /// <summary>Runs work on a worker thread (pure computation only, no SOLIDWORKS calls) or inline.</summary>
         private void Run(Func<string> work, bool background = false, Action then = null, string title = null, Action failed = null)
         {
+            if (title != null) Guarded.Step("Job: " + title);
             if (!background)
             {
                 Cursor = Cursors.WaitCursor;
@@ -746,6 +749,8 @@ namespace MeshFit.SolidWorks
                 UseWaitCursor = false;
                 bool cancelled = t.IsCanceled || cts.IsCancellationRequested ||
                                  (t.IsFaulted && t.Exception.GetBaseException() is OperationCanceledException);
+                Guarded.Step($"Job {(cancelled ? "cancelled" : t.IsFaulted ? "failed" : "done")}: {title ?? "work"}" +
+                             (t.IsFaulted && !cancelled ? " — " + t.Exception.GetBaseException() : ""));
                 SetStatus(cancelled ? "Cancelled — nothing was changed." :
                           t.IsFaulted ? "Error: " + t.Exception.GetBaseException().Message : t.Result);
                 ShowResult(S.ActiveRegion);
@@ -871,6 +876,19 @@ namespace MeshFit.SolidWorks
 
         // ================================================================== refresh
 
+        private bool _refreshQueued;
+
+        /// <summary>
+        /// Session changes come in bursts (every brush dab, every region of a segmentation): refresh once per
+        /// message cycle instead of once per change.
+        /// </summary>
+        private void QueueRefreshAll()
+        {
+            if (_refreshQueued || !IsHandleCreated) return;
+            _refreshQueued = true;
+            BeginInvoke((Action)(() => { _refreshQueued = false; RefreshAll(); }));
+        }
+
         private void RefreshAll()
         {
             if (IsDisposed) return;
@@ -880,11 +898,16 @@ namespace MeshFit.SolidWorks
             {
                 _guide.Text = S.NextStep();
                 var a = S.ActiveRegion;
-                _activeCombo.BeginUpdate();
-                _activeCombo.Items.Clear();
-                if (S.Regions != null) foreach (var r in S.Regions.Regions) _activeCombo.Items.Add(r);
-                _activeCombo.SelectedItem = a;
-                _activeCombo.EndUpdate();
+                var comboItems = S.Regions?.Regions.ToList() ?? new List<Region>();
+                if (!comboItems.SequenceEqual(_activeCombo.Items.Cast<Region>()))
+                {
+                    _activeCombo.BeginUpdate();
+                    _activeCombo.Items.Clear();
+                    foreach (var r in comboItems) _activeCombo.Items.Add(r);
+                    _activeCombo.EndUpdate();
+                }
+                if (_activeCombo.SelectedItem != a) _activeCombo.SelectedItem = a;
+                _activeCombo.Invalidate();
                 _undo.Enabled = S.Regions?.CanUndo == true;
                 _redo.Enabled = S.Regions?.CanRedo == true;
                 _tips.SetToolTip(_undo, S.Regions?.UndoLabel != null ? "Undo: " + S.Regions.UndoLabel : "Nothing to undo");
@@ -903,25 +926,37 @@ namespace MeshFit.SolidWorks
                 _stepNext.BackColor = step == 4 ? hi : SystemColors.Control;
                 foreach (var b in new[] { _reverse, _stepNext }) b.UseVisualStyleBackColor = b.BackColor == SystemColors.Control;
 
-                _regions.BeginUpdate();
-                _regions.Items.Clear();
-                _swatches.Images.Clear();
-                if (S.Regions != null)
+                // Rebuild the list only when what it shows changed. Swatches are cached per colour and the bold font
+                // is shared: creating fonts and bitmaps on every refresh leaks GDI handles, and SOLIDWORKS dies
+                // when the process reaches the 10,000-handle limit.
+                var regs = S.Regions?.Regions.ToList() ?? new List<Region>();
+                string Row(Region r) => string.Join("|", r.Id, r.Name, r.Color, r.Fit?.Surface?.Kind.ToString() ?? r.Request.ToString(),
+                    r.Fit != null ? (r.Fit.Stats.MaxAbs * 1000).ToString("0.###", CultureInfo.InvariantCulture) : "", StatusOf(r), r == a ? "*" : "");
+                string signature = string.Join("\n", regs.Select(Row));
+                if (signature != _regionsShown)
                 {
-                    foreach (var r in S.Regions.Regions)
+                    _regionsShown = signature;
+                    if (_boldFont == null) _boldFont = new Font(Font, FontStyle.Bold);
+                    _regions.BeginUpdate();
+                    _regions.Items.Clear();
+                    foreach (var r in regs)
                     {
-                        var bmp = new Bitmap(12, 12);
-                        using (var g = Graphics.FromImage(bmp)) g.Clear(Color.FromArgb(255, Color.FromArgb(r.Color)));
-                        _swatches.Images.Add(bmp);
-                        var it = new ListViewItem(r.Name, _swatches.Images.Count - 1) { Tag = r };
+                        string key = r.Color.ToString("X6", CultureInfo.InvariantCulture);
+                        if (!_swatches.Images.ContainsKey(key))
+                        {
+                            var bmp = new Bitmap(12, 12);
+                            using (var g = Graphics.FromImage(bmp)) g.Clear(Color.FromArgb(255, Color.FromArgb(r.Color)));
+                            _swatches.Images.Add(key, bmp);
+                        }
+                        var it = new ListViewItem(r.Name, key) { Tag = r };
                         it.SubItems.Add(r.Fit?.Surface?.Kind.ToString() ?? (r.Request == FitRequest.Auto ? "" : "(" + r.Request + ")"));
                         it.SubItems.Add(r.Fit != null ? (r.Fit.Stats.MaxAbs * 1000).ToString("0.###", CultureInfo.InvariantCulture) : "");
                         it.SubItems.Add(StatusOf(r));
-                        if (r == a) { it.Selected = true; it.Font = new Font(Font, FontStyle.Bold); }
+                        if (r == a) { it.Selected = true; it.Font = _boldFont; }
                         _regions.Items.Add(it);
                     }
+                    _regions.EndUpdate();
                 }
-                _regions.EndUpdate();
             }
             finally { _updating = false; }
         }
@@ -1082,17 +1117,24 @@ namespace MeshFit.SolidWorks
             if (IsDisposed || !S.HasMesh) return;
             if (InvokeRequired) { BeginInvoke((Action)(() => ShowPaintMenu(screen))); return; }
             var m = new ContextMenuStrip { ShowCheckMargin = true, ShowImageMargin = true };
-            m.Closed += (s, e) => Safe(() => BeginInvoke((Action)m.Dispose));
+            var images = new List<Image>();
+            // Dispose the menu and every icon made for it once it closes (no GDI build-up from repeated menus).
+            m.Closed += (s, e) => Safe(() => BeginInvoke((Action)(() =>
+            {
+                m.Dispose();
+                foreach (var img in images) img.Dispose();
+            })));
             ToolStripMenuItem Item(ToolStripItemCollection into, string text, Action a, Cmd? icon = null, bool check = false, string tip = null)
             {
                 var it = new ToolStripMenuItem(text) { Checked = check, ToolTipText = tip };
-                if (icon.HasValue) it.Image = CommandIcons.Render(icon.Value, 16, transparent: true);
+                if (icon.HasValue) { it.Image = CommandIcons.Render(icon.Value, 16, transparent: true); images.Add(it.Image); }
                 if (a != null) it.Click += (s, e) => Safe(() => Guard(a));
                 into.Add(it);
                 return it;
             }
             var a = S.ActiveRegion;
-            m.Items.Add(new ToolStripLabel(a == null ? "No region" : $"{a.Name}  ({a.TriangleCount:N0} triangles)") { Font = new Font(Font, FontStyle.Bold) });
+            if (_boldFont == null) _boldFont = new Font(Font, FontStyle.Bold);
+            m.Items.Add(new ToolStripLabel(a == null ? "No region" : $"{a.Name}  ({a.TriangleCount:N0} triangles)") { Font = _boldFont });
 
             // Paint tools and their settings
             foreach (var (tool, text, cmd) in new[]
@@ -1126,17 +1168,21 @@ namespace MeshFit.SolidWorks
 
             // Regions
             var regs = Item(m.Items, "Regions", null);
-            foreach (var r in S.Regions.Regions)
+            // The active region and its neighbours in the list; the full list is in the task pane.
+            var all = S.Regions.Regions.ToList();
+            int at = Math.Max(0, all.IndexOf(a));
+            var shown = all.Skip(Math.Max(0, Math.Min(at - 15, all.Count - 30))).Take(30).ToList();
+            foreach (var r in shown)
             {
                 var rr = r;
                 var it = Item(regs.DropDownItems, $"{r.Name}  ·  {(r.Fit?.Surface?.Kind.ToString() ?? "not fitted")}" +
                     (r.FeatureName != null ? "  ✔" : ""), () => { S.ActiveRegion = rr; S.RaiseChanged(); }, null, r == a);
-                using (var b = new Bitmap(16, 16))
-                {
-                    using (var g = Graphics.FromImage(b)) g.Clear(Color.FromArgb(255, Color.FromArgb(r.Color)));
-                    it.Image = new Bitmap(b);
-                }
+                var b = new Bitmap(16, 16);
+                using (var g = Graphics.FromImage(b)) g.Clear(Color.FromArgb(255, Color.FromArgb(r.Color)));
+                it.Image = b;
+                images.Add(b);
             }
+            if (all.Count > shown.Count) Item(regs.DropDownItems, $"All {all.Count} regions…", () => Execute(Cmd.ShowRegions));
             regs.DropDownItems.Add(new ToolStripSeparator());
             Item(regs.DropDownItems, "New region", () => Execute(Cmd.NewRegion), Cmd.NewRegion);
             Item(regs.DropDownItems, "Rename…", RenameActive);
@@ -1151,7 +1197,7 @@ namespace MeshFit.SolidWorks
             {
                 var rq = req;
                 var it = Item(type.DropDownItems, rq.ToString(), () => { if (S.ActiveRegion != null) { S.ActiveRegion.Request = rq; S.RaiseChanged(); } }, null, a?.Request == rq);
-                it.Image = ShapeIcons.Draw(rq);
+                it.Image = ShapeIcons.Draw(rq); images.Add(it.Image);
             }
             Item(m.Items, "Extend To Similar (fit + grow)", () => Execute(Cmd.FitAndGrow), Cmd.FitAndGrow);
             var model = Item(m.Items, "Model", null, Cmd.SurfacePrimitives);
@@ -1313,25 +1359,62 @@ namespace MeshFit.SolidWorks
 
         private void FitRegions(List<Region> regions) => FitRegions(regions, null);
 
-        private void FitRegions(List<Region> regions, Action then)
+        /// <summary>
+        /// Fits regions on a worker thread. Everything the fits need is copied first (triangles, options, the other
+        /// fitted surfaces) and the results are applied on the UI thread, so painting or the overlay can never see
+        /// half-updated state. Esc cancels; regions fitted so far keep their result.
+        /// </summary>
+        private void FitRegions(List<Region> regions, Action then, bool classifyOnly = false)
         {
             if (!NeedMesh()) return;
             regions = regions.Where(r => r.TriangleCount > 0).ToList();
             if (regions.Count == 0) { SetStatus("Paint a region first."); return; }
             ApplyFitSettings();
+            var mesh = S.Mesh;
+            var jobs = regions.Select(r => (region: r, tris: S.Regions.TriangleListOf(r.Id), request: r.Request)).ToList();
+            var options = S.FitOptions.Clone();
+            options.FirstWithinTolerance = classifyOnly;
+            var idealize = S.Idealize.Clone();
+            var fixedOthers = S.Regions.Regions.Where(o => o.Fit?.Surface != null && !regions.Contains(o))
+                                       .Select(o => (o.Name, o.Fit.Surface)).ToList();
+            var results = new FitResult[jobs.Count];
+            Guarded.Step($"Fitting {jobs.Count} region(s), {jobs.Sum(j => j.tris.Count):N0} triangles");
             Run(() =>
             {
                 var msgs = new List<string>();
-                int i = 0;
-                foreach (var r in regions)
+                var others = new List<(string, FittedSurface)>(fixedOthers);
+                for (int i = 0; i < jobs.Count; i++)
                 {
                     Token.ThrowIfCancellationRequested();
-                    Report($"Fitting '{r.Name}' ({++i} of {regions.Count})", (double)(i - 1) / regions.Count);
-                    try { var f = S.FitRegion(r); msgs.Add($"{r.Name}: {f.Surface.Kind}, max {f.Stats.MaxAbs * 1000:0.###} mm"); }
+                    var (r, tris, request) = jobs[i];
+                    Report($"Fitting '{r.Name}' ({i + 1} of {jobs.Count})", (double)i / jobs.Count);
+                    try
+                    {
+                        var o = options.Clone();
+                        o.Request = request;
+                        var f = Session.ComputeFit(mesh, tris, o, idealize.Clone(), others);
+                        results[i] = f;
+                        others.Add((r.Name, f.Surface));
+                        if (jobs.Count <= 20) msgs.Add($"{r.Name}: {f.Surface.Kind}, max {f.Stats.MaxAbs * 1000:0.###} mm");
+                    }
+                    catch (OperationCanceledException) { throw; }
                     catch (Exception ex) { msgs.Add($"{r.Name}: {ex.Message}"); }
                 }
-                return string.Join("; ", msgs);
-            }, background: true, title: "Fitting", then: then);
+                Guarded.Step("Fitting finished");
+                return jobs.Count <= 20 ? string.Join("; ", msgs) : $"Fitted {results.Count(x => x != null)} of {jobs.Count} regions.";
+            }, background: true, title: classifyOnly ? "Classifying regions" : "Fitting", then: () =>
+            {
+                ApplyFits(jobs.Select(j => j.region).ToList(), results);
+                then?.Invoke();
+            }, failed: () => ApplyFits(jobs.Select(j => j.region).ToList(), results));
+        }
+
+        /// <summary>UI thread: stores the fits computed so far (also after Esc).</summary>
+        private void ApplyFits(List<Region> regions, FitResult[] results)
+        {
+            for (int i = 0; i < regions.Count; i++) if (results[i] != null && regions[i].TriangleCount > 0) regions[i].Fit = results[i];
+            ShowResult(S.ActiveRegion);
+            S.RaiseChanged();
         }
 
         private void FitAndGrow()
@@ -1557,8 +1640,11 @@ namespace MeshFit.SolidWorks
                 Margin = new Padding(0, 2, 0, 2);
             }
 
-            protected override void OnPaint(PaintEventArgs e)
+            protected override void OnPaint(PaintEventArgs e) => Guarded.Run("legend", () => PaintLegend(e));
+
+            private void PaintLegend(PaintEventArgs e)
             {
+                if (Width < 60 || Height < 16) return;
                 var g = e.Graphics;
                 double tol = _tolMm();
                 int barW = Width - 50, x0 = 4, h = 12;

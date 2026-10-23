@@ -103,13 +103,13 @@ namespace MeshFit.SolidWorks
         protected override void RefreshControls()
         {
             Message("Select a base plane, set the offset, check the yellow lines and arcs on the scan, then ✔ to create the sketch.");
-            if (_planeInfo != null) _planeInfo.Caption = "Base: " + _planeName;
-            if (_offset != null) _offset.Value = _offsetValue;
-            if (_tol != null) _tol.Value = _tolValue;
-            if (_minLen != null) _minLen.Value = _minLength;
-            if (_relations != null) _relations.Checked = _relationsOn;
-            if (_hv != null) _hv.Value = _hvRad;
-            if (_result != null) _result.Caption = _resultText;
+            SetCaption(_planeInfo, "Base: " + _planeName);
+            SetValue(_offset, _offsetValue);
+            SetValue(_tol, _tolValue);
+            SetValue(_minLen, _minLength);
+            SetChecked(_relations, _relationsOn);
+            SetValue(_hv, _hvRad);
+            SetCaption(_result, _resultText);
         }
 
         protected override bool AcceptSelection(int id, object selection, int selType)

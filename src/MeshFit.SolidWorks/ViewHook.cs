@@ -1,4 +1,6 @@
 using System;
+using System.Runtime.ExceptionServices;
+using System.Security;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Windows.Forms;
@@ -59,9 +61,9 @@ namespace MeshFit.SolidWorks
             catch (Exception ex) { Trace.WriteLine("MeshFit: view subclass failed, using mouse notifications: " + ex.Message); }
 
             _mouse = _view.GetMouse();
-            _mouse.MouseLBtnDownNotify += (x, y, w) => _input == null ? Down(x, y, w) : 0;
-            _mouse.MouseLBtnUpNotify += (x, y, w) => _input == null ? Up() : 0;
-            _mouse.MouseMoveNotify += (x, y, w) => _input == null ? Move(x, y, w) : 0;
+            _mouse.MouseLBtnDownNotify += (x, y, w) => _input == null ? Safe("mouse down", () => Down(x, y, w)) : 0;
+            _mouse.MouseLBtnUpNotify += (x, y, w) => _input == null ? Safe("mouse up", Up) : 0;
+            _mouse.MouseMoveNotify += (x, y, w) => _input == null ? Safe("mouse move", () => Move(x, y, w)) : 0;
         }
 
         private ScreenProjector Projector => _projector ?? (_projector = new ScreenProjector(_view, _math));
@@ -72,15 +74,33 @@ namespace MeshFit.SolidWorks
             return 0;
         }
 
+        private static int Safe(string what, Func<int> a)
+        {
+            try { return a(); }
+            catch (Exception ex) { Guarded.Report(what, ex); return 0; }
+        }
+
+        /// <summary>
+        /// Draws the overlay after SOLIDWORKS has drawn the frame. A fault inside the graphics driver (access
+        /// violation) would otherwise end SOLIDWORKS: it is caught here, logged, and the overlay is switched off.
+        /// </summary>
+        [HandleProcessCorruptedStateExceptions, SecurityCritical]
         private int OnBufferSwap()
         {
+            if (_renderer.Failed) return 0;
             try
             {
                 // Refresh the pick projection every frame: any rotate/zoom/pan ends with a redraw.
                 _projector = new ScreenProjector(_view, _math);
                 _renderer.Draw(_projector.PixelSize);
             }
-            catch (Exception ex) { Trace.WriteLine("MeshFit draw: " + ex); }
+            catch (AccessViolationException ex)
+            {
+                _renderer.Failed = true;
+                Guarded.Write("Graphics driver fault while drawing the overlay; overlay switched off: " + ex);
+                _session.Say("The graphics driver failed drawing the MeshFit overlay, so the overlay is off. Details in the MeshFit log.");
+            }
+            catch (Exception ex) { Guarded.Write("Overlay draw: " + ex.Message); }
             return 0;
         }
 

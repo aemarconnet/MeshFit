@@ -104,7 +104,7 @@ namespace MeshFit.SolidWorks
                                 break;
                             case Cmd.PositionMesh: // axes triad
                                 g.DrawLine(red, 5, 15, 17, 15); g.DrawLine(pen, 5, 15, 5, 3);
-                                g.DrawLine(new Pen(Color.Green, 2), 5, 15, 13, 9);
+                                using (var green = new Pen(Color.Green, 2)) g.DrawLine(green, 5, 15, 13, 9);
                                 break;
                             case Cmd.AnalyzeCad: // colour scale
                                 g.FillRectangle(Brushes.RoyalBlue, 2, 4, 5, 12); g.FillRectangle(Brushes.LimeGreen, 7, 4, 6, 12); g.FillRectangle(Brushes.OrangeRed, 13, 4, 5, 12);

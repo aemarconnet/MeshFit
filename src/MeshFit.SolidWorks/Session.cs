@@ -260,6 +260,7 @@ namespace MeshFit.SolidWorks
             EnsureRegion();
             _strokeRemove = RemoveMode ^ invert;
             _stroking = true;
+            _strokeStartCount = ActiveRegion?.TriangleCount ?? 0;
             _lastStrokePoint = null;
             _lastStrokeTri = -1;
             Regions.BeginStroke((_strokeRemove ? "Remove (" : "Paint (") + ToolName(Tool) + ")");
@@ -281,10 +282,14 @@ namespace MeshFit.SolidWorks
             t == PaintTool.Fillet ? "fillet select" : t == PaintTool.Freehand ? "freehand selection" :
             t == PaintTool.Rectangle ? "rectangle selection" : t.ToString().ToLowerInvariant();
 
+        private int _strokeStartCount;
+
         public void EndStroke()
         {
             if (!_stroking) return;
             _stroking = false;
+            int changed = Math.Abs((ActiveRegion?.TriangleCount ?? 0) - _strokeStartCount);
+            if (changed > 200000) MeshFit.SolidWorks.Guarded.Step($"{ToolName(Tool)} stroke changed {changed:N0} triangles");
             if (_lastStrokePoint.HasValue) { LastPaintPoint = _lastStrokePoint; LastPaintRadius = _lastRadius; }
             _lastStrokePoint = null;
             if (Tool == PaintTool.SmartFill && !_strokeRemove && AutoFillIslandLimit > 0 && ActiveRegion != null)
@@ -430,6 +435,30 @@ namespace MeshFit.SolidWorks
         }
 
         // ------------------------------------------------------------------ fitting
+
+        /// <summary>
+        /// Thread-safe fit: everything it needs is passed in (a snapshot), nothing in the session is read or written.
+        /// Used by background jobs; <paramref name="others"/> are the other fitted surfaces for clean geometry.
+        /// </summary>
+        public static FitResult ComputeFit(TriMesh mesh, List<int> tris, FitOptions options, IdealizeOptions idealize,
+                                           IEnumerable<(string name, FittedSurface surface)> others)
+        {
+            if (tris.Count < 3) throw new InvalidOperationException("The region has no painted triangles.");
+            var res = SurfaceFitter.Fit(mesh, tris, options);
+            if (idealize.RoundDimensions || idealize.SnapToAxes || idealize.SnapToFeatures || idealize.Tangency)
+            {
+                idealize.Tolerance = options.Tolerance;
+                var pts = mesh.VerticesOf(tris).Select(i => mesh.Vertices[i]).ToArray();
+                var ideal = Idealizer.Idealize(res.Surface, pts, others, idealize);
+                if (ideal.Applied.Count > 0)
+                {
+                    res.Surface = ideal.Surface;
+                    res.Stats = SurfaceFitter.Evaluate(ideal.Surface, pts, options.Tolerance);
+                    res.Constraints = ideal.Applied;
+                }
+            }
+            return res;
+        }
 
         public FitResult FitRegion(Region r)
         {

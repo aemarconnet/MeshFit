@@ -910,6 +910,7 @@ namespace MeshFit.SolidWorks
                 $"Deviation: RMS {f.Stats.Rms * 1000:0.####} mm, max {f.Stats.MaxAbs * 1000:0.####} mm, 95% within {f.Stats.P95 * 1000:0.####} mm",
                 $"{f.Stats.WithinTolerance:P1} of {f.Stats.PointCount:N0} points within ±{S.FitOptions.Tolerance * 1000:0.###} mm"
             };
+            if (f.Constraints != null && f.Constraints.Count > 0) lines.Add("Clean geometry: " + string.Join("; ", f.Constraints));
             if (f.Warning != null) lines.Add("WARNING: " + f.Warning);
             if (f.Alternatives.Count > 1)
             {

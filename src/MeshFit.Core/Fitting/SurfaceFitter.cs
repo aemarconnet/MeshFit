@@ -44,6 +44,8 @@ namespace MeshFit.Core.Fitting
         public FittedSurface Surface { get; set; }
         public FitStatistics Stats { get; set; }
         public string Warning { get; set; }
+        /// <summary>Clean-geometry constraints applied after the best fit (e.g. "axis ∥ Z", "R = 25 mm").</summary>
+        public List<string> Constraints { get; set; } = new List<string>();
         /// <summary>All candidates evaluated in Auto mode, best first.</summary>
         public List<FitResult> Alternatives { get; set; } = new List<FitResult>();
         public override string ToString() => Surface == null ? "(failed)" :

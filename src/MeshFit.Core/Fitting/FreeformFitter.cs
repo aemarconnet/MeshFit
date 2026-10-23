@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MeshFit.Core.Geometry;
 
 namespace MeshFit.Core.Fitting
@@ -59,9 +60,11 @@ namespace MeshFit.Core.Fitting
             }
             else
             {
-                // Grow the control net until the tolerance is met.
+                // Grow the control net until the tolerance is met — judged on RMS and the 95th percentile, so
+                // scan noise spikes don't force extra control points (fewer points = fairer surface).
                 double aspect = (u1 - u0) / (v1 - v0);
                 double baseN = p + 1;
+                int bestU = 0, bestV = 0;
                 for (int step = 0; step < 12; step++)
                 {
                     double n = baseN * Math.Pow(1.35, step);
@@ -69,16 +72,40 @@ namespace MeshFit.Core.Fitting
                     int nv = (int)Math.Round(n / Math.Sqrt(Math.Min(aspect, 1)));
                     nu = Math.Max(p + 1, Math.Min(opt.MaxControlPoints, nu));
                     nv = Math.Max(p + 1, Math.Min(opt.MaxControlPoints, nv));
-                    // Don't use more unknowns than the data supports.
                     if (nu * nv > pts.Length / 2 && result != null) break;
                     result = FitFixed(pts, (double[,])uv.Clone(), frame, p, nu, nv, u0, u1, v0, v1, opt);
-                    double max = 0;
-                    foreach (var q in pts) max = Math.Max(max, Math.Abs(result.Distance(q)));
-                    if (max <= opt.Tolerance) break;
+                    bestU = nu; bestV = nv;
+                    if (MeetsTolerance(result, pts, opt.Tolerance)) break;
                     if (nu >= opt.MaxControlPoints && nv >= opt.MaxControlPoints) break;
+                }
+                // Fairest surface: the strongest smoothing that still meets the tolerance.
+                if (result != null && MeetsTolerance(result, pts, opt.Tolerance))
+                {
+                    foreach (double sm in new[] { 1e-6, 1e-7, 1e-8, 1e-9 })
+                    {
+                        if (sm <= opt.Smoothing) break;
+                        var o2 = new FreeformOptions
+                        {
+                            Degree = opt.Degree, Smoothing = sm, Margin = opt.Margin, Tolerance = opt.Tolerance,
+                            ParameterCorrections = opt.ParameterCorrections, MaxControlPoints = opt.MaxControlPoints
+                        };
+                        var smooth = FitFixed(pts, (double[,])uv.Clone(), frame, p, bestU, bestV, u0, u1, v0, v1, o2);
+                        if (smooth != null && MeetsTolerance(smooth, pts, opt.Tolerance)) { result = smooth; break; }
+                    }
                 }
             }
             return result;
+        }
+
+        /// <summary>95 % of the points within the tolerance and RMS within half of it.</summary>
+        private static bool MeetsTolerance(FreeformSurface s, Vec3[] pts, double tol)
+        {
+            int step = Math.Max(1, pts.Length / 3000);
+            var d = new List<double>();
+            for (int i = 0; i < pts.Length; i += step) d.Add(Math.Abs(s.Distance(pts[i])));
+            d.Sort();
+            double rms = Math.Sqrt(d.Sum(x => x * x) / d.Count);
+            return d[(int)(0.95 * (d.Count - 1))] <= tol && rms <= 0.5 * tol;
         }
 
         /// <summary>

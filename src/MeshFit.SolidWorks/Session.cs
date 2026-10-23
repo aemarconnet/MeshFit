@@ -36,6 +36,8 @@ namespace MeshFit.SolidWorks
         public int AutoFillIslandLimit { get; set; } = 500;
 
         public FitOptions FitOptions { get; } = new FitOptions { Tolerance = 0.0002 };
+        /// <summary>Clean-geometry settings applied after every fit (model units are metres).</summary>
+        public IdealizeOptions Idealize { get; } = new IdealizeOptions();
 
         // ---- feature (fillet) detection
         /// <summary>Curvature field of the mesh; null until computed (it is computed in the background after loading).</summary>
@@ -414,6 +416,20 @@ namespace MeshFit.SolidWorks
             if (tris.Count < 3) throw new InvalidOperationException($"'{r.Name}' has no painted triangles.");
             FitOptions.Request = r.Request;
             var res = SurfaceFitter.Fit(Mesh, tris, FitOptions);
+            if (Idealize.RoundDimensions || Idealize.SnapToAxes || Idealize.SnapToFeatures || Idealize.Tangency)
+            {
+                // Clean geometry: snap / align / make tangent / round, within tolerance.
+                Idealize.Tolerance = FitOptions.Tolerance;
+                var pts = RegionPoints(r);
+                var others = Regions.Regions.Where(o => o != r && o.Fit?.Surface != null).Select(o => (o.Name, o.Fit.Surface));
+                var ideal = Idealizer.Idealize(res.Surface, pts, others, Idealize);
+                if (ideal.Applied.Count > 0)
+                {
+                    res.Surface = ideal.Surface;
+                    res.Stats = SurfaceFitter.Evaluate(ideal.Surface, pts, FitOptions.Tolerance);
+                    res.Constraints = ideal.Applied;
+                }
+            }
             r.Fit = res;
             return res;
         }

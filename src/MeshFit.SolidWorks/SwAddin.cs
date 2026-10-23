@@ -135,6 +135,8 @@ namespace MeshFit.SolidWorks
                 _hook = new ViewHook(view, doc, _math, Session, Renderer);
                 _hook.Destroyed += () => { _hook = null; _hookedDoc = null; };
                 _hook.BrushResized += () => BrushResized?.Invoke();
+                _hook.ContextMenuRequested += pt => _control?.ShowPaintMenu(pt);
+                _hook.DeletePressed += () => _control?.Execute(Cmd.ClearRegion);
             }
             Redraw();
         }

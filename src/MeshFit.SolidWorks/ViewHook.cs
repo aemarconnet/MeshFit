@@ -10,14 +10,17 @@ namespace MeshFit.SolidWorks
     /// Attaches to one SOLIDWORKS model view: draws the overlay after each frame and handles painting input.
     /// While a paint tool is active, left-button and modified-wheel messages are taken directly from the
     /// view window (subclassed), so SOLIDWORKS never sees them: no selection box, no zoom on Ctrl/Shift+wheel.
-    /// Middle button (rotate/pan), plain wheel (zoom) and right button (context menu) still reach SOLIDWORKS.
+    /// Middle button (rotate/pan) and plain wheel (zoom) still reach SOLIDWORKS. The right button opens the MeshFit
+    /// paint menu instead of the SOLIDWORKS one, which only knows about SOLIDWORKS selections.
     /// If the window cannot be subclassed, the SOLIDWORKS mouse notifications are used as a fallback.
     /// </summary>
     internal sealed class ViewHook : IDisposable
     {
         private const int MK_LBUTTON = 0x0001, MK_SHIFT = 0x0004, MK_CONTROL = 0x0008;
         private const int WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202,
-                          WM_LBUTTONDBLCLK = 0x0203, WM_MOUSEWHEEL = 0x020A, WM_CAPTURECHANGED = 0x0215;
+                          WM_LBUTTONDBLCLK = 0x0203, WM_MOUSEWHEEL = 0x020A, WM_CAPTURECHANGED = 0x0215,
+                          WM_RBUTTONDOWN = 0x0204, WM_RBUTTONUP = 0x0205, WM_CONTEXTMENU = 0x007B,
+                          WM_KEYDOWN = 0x0100, VK_DELETE = 0x2E;
 
         private readonly ModelView _view;
         private readonly IModelDoc2 _doc;
@@ -33,6 +36,10 @@ namespace MeshFit.SolidWorks
         public event Action Destroyed;
         /// <summary>Brush radius changed by the wheel (UI should refresh).</summary>
         public event Action BrushResized;
+        /// <summary>Right click while painting: show the MeshFit menu at this screen point.</summary>
+        public event Action<System.Drawing.Point> ContextMenuRequested;
+        /// <summary>Delete pressed in the view while painting.</summary>
+        public event Action DeletePressed;
         public ModelView View => _view;
 
         public ViewHook(ModelView view, IModelDoc2 doc, IMathUtility math, Session session, OverlayRenderer renderer)
@@ -240,6 +247,19 @@ namespace MeshFit.SolidWorks
                             if (paint && (keys & (MK_CONTROL | MK_SHIFT)) != 0) { _h.Wheel(delta); return; }
                             break;
                         }
+                        case WM_RBUTTONDOWN:
+                            if (paint) return;
+                            break;
+                        case WM_RBUTTONUP:
+                            if (!paint) break;
+                            _h.ContextMenuRequested?.Invoke(Cursor.Position);
+                            return;
+                        case WM_CONTEXTMENU:
+                            if (paint) return;
+                            break;
+                        case WM_KEYDOWN:
+                            if (paint && (long)m.WParam == VK_DELETE) { _h.DeletePressed?.Invoke(); return; }
+                            break;
                         case WM_CAPTURECHANGED:
                             if (_captured && m.LParam != Handle) { _captured = false; _h.Up(); }
                             break;

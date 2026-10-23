@@ -8,8 +8,8 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 8.0.x
       - name: Test fitting library
@@ -17,7 +17,7 @@ jobs:
       - name: Build SOLIDWORKS add-in
         run: dotnet build src/MeshFit.SolidWorks -c Release
       - name: Upload add-in
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: MeshFit-SolidWorks-addin
           path: src/MeshFit.SolidWorks/bin/Release/net48/

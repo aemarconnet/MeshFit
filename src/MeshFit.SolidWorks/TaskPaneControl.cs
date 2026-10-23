@@ -22,7 +22,7 @@ namespace MeshFit.SolidWorks
         private const int W = 290;
         private readonly SwAddin _addin;
         private Session S => _addin.Session;
-        private readonly ToolTip _tips = new ToolTip { AutoPopDelay = 15000, InitialDelay = 400 };
+        private readonly HoverTips _tips = new HoverTips();
 
         // header
         private Label _guide;
@@ -444,7 +444,7 @@ namespace MeshFit.SolidWorks
         private TabBuilder Tab(string title, string tip)
         {
             var page = new TabPage(title) { AutoScroll = true, ToolTipText = tip, UseVisualStyleBackColor = true };
-            _tabs.ShowToolTips = true;
+            _tabs.ShowToolTips = false;
             var panel = new FlowLayoutPanel
             {
                 FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true,
@@ -626,9 +626,14 @@ namespace MeshFit.SolidWorks
                         break;
                     case Cmd.NextFeature: NextFeature(); break;
                     case Cmd.ReverseEngineer:
-                        if (!NeedMesh()) break;
+                        // Without a mesh, load one first and open the page afterwards.
+                        if (!S.HasMesh) { LoadMesh(() => _addin.ShowReverseEngineerPage()); break; }
                         if (S.Tool == PaintTool.None) SetTool(PaintTool.SmartFill);
                         _addin.ShowReverseEngineerPage();
+                        break;
+                    case Cmd.ShowRegions:
+                        _addin.ShowTaskPane();
+                        _tabs.SelectedIndex = 0;
                         break;
                     case Cmd.LoadMesh: LoadMesh(); break;
                     case Cmd.UseBodies: UseBodies(); break;
@@ -806,12 +811,13 @@ namespace MeshFit.SolidWorks
             if (IsDisposed) return;
             if (InvokeRequired) { BeginInvoke((Action)(() => SetStatus(msg))); return; }
             _status.Text = msg;
+            _addin.StatusBar(msg);
         }
 
         private bool NeedMesh()
         {
             if (S.HasMesh) return true;
-            SetStatus("Load a mesh first.");
+            SetStatus("Load a mesh first (MeshFit tab → Load Mesh).");
             return false;
         }
 
@@ -983,9 +989,10 @@ namespace MeshFit.SolidWorks
             S.RaiseChanged();
         }
 
-        private void ChangeColour()
+        private void ChangeColour() => ChangeColour(Selected().FirstOrDefault());
+
+        private void ChangeColour(Region r)
         {
-            var r = Selected().FirstOrDefault();
             if (r == null) return;
             using (var dlg = new ColorDialog { Color = Color.FromArgb(255, Color.FromArgb(r.Color)), FullOpen = true })
             {
@@ -1063,6 +1070,140 @@ namespace MeshFit.SolidWorks
             catch (Exception ex) { SetStatus("Error: " + ex.Message); done?.Invoke(false); }
         }
 
+        // ================================================================== right-click paint menu
+
+        /// <summary>Right click in the graphics area while painting: everything for the brush, the region and the next step.</summary>
+        internal void ShowPaintMenu(Point screen)
+        {
+            if (IsDisposed || !S.HasMesh) return;
+            if (InvokeRequired) { BeginInvoke((Action)(() => ShowPaintMenu(screen))); return; }
+            var m = new ContextMenuStrip { ShowCheckMargin = true, ShowImageMargin = true };
+            m.Closed += (s, e) => BeginInvoke((Action)m.Dispose);
+            ToolStripMenuItem Item(ToolStripItemCollection into, string text, Action a, Cmd? icon = null, bool check = false, string tip = null)
+            {
+                var it = new ToolStripMenuItem(text) { Checked = check, ToolTipText = tip };
+                if (icon.HasValue) it.Image = CommandIcons.Render(icon.Value, 16, transparent: true);
+                if (a != null) it.Click += (s, e) => Guard(a);
+                into.Add(it);
+                return it;
+            }
+            var a = S.ActiveRegion;
+            m.Items.Add(new ToolStripLabel(a == null ? "No region" : $"{a.Name}  ({a.TriangleCount:N0} triangles)") { Font = new Font(Font, FontStyle.Bold) });
+
+            // Paint tools and their settings
+            foreach (var (tool, text, cmd) in new[]
+            {
+                (PaintTool.SmartFill, "Smart fill", Cmd.ToolSmartFill), (PaintTool.Brush, "Brush", Cmd.ToolBrush),
+                (PaintTool.Fillet, "Fillet band", Cmd.ToolFillet), (PaintTool.FillConnected, "Whole shell", Cmd.ToolFillShell),
+                (PaintTool.PickRegion, "Pick region", Cmd.ToolPick),
+            })
+                Item(m.Items, text, () => SetTool(tool), cmd, S.Tool == tool);
+            Item(m.Items, "Remove (unselect)", () => Execute(Cmd.ToggleMode), Cmd.ToggleMode, S.RemoveMode, "Tools unselect instead of paint (hold Shift for a temporary switch)");
+            m.Items.Add(NumberItem("Brush Ø mm", _brushDiameter.Minimum, _brushDiameter.Maximum, 2, (decimal)(S.BrushRadius * 2000),
+                v => { S.BrushRadius = (double)v / 2000; RefreshAll(); _addin.Redraw(); }, "Brush diameter (Ctrl/Shift + wheel in the view)"));
+            m.Items.Add(NumberItem("Smart fill edge °", _smartAngle.Minimum, _smartAngle.Maximum, 1, (decimal)S.SmartAngleDeg,
+                v => { S.SmartAngleDeg = (double)v; _smartAngle.Value = Clamp(v, _smartAngle); }, "Smart fill stops at edges sharper than this angle"));
+            Item(m.Items, "Stop at fillets", () => { _stopAtFillets.Checked = !_stopAtFillets.Checked; }, null, S.StopAtFillets,
+                "Smart fill and Fit + grow stop where a tangent fillet or blend starts");
+            m.Items.Add(new ToolStripSeparator());
+
+            // Selection
+            Item(m.Items, "Clear selection (Delete)", () => Execute(Cmd.ClearRegion), Cmd.ToolOff, false, "Unselect every triangle of the active region (Undo restores it)");
+            Item(m.Items, "Undo", () => Execute(Cmd.Undo), Cmd.Undo).Enabled = S.Regions?.CanUndo == true;
+            var sel = Item(m.Items, "Selection", null);
+            Item(sel.DropDownItems, "Fill islands", () => Execute(Cmd.FillIslands), Cmd.FillIslands);
+            Item(sel.DropDownItems, "Clean up paint", () => Execute(Cmd.CleanUp), Cmd.CleanUp);
+            Item(sel.DropDownItems, "Grow edge", () => Execute(Cmd.GrowRing));
+            Item(sel.DropDownItems, "Shrink edge", () => Execute(Cmd.ShrinkRing));
+            Item(sel.DropDownItems, "Grow to fillets", () => Execute(Cmd.GrowToFillets), Cmd.GrowToFillets);
+            Item(sel.DropDownItems, "Trim fillets", () => Execute(Cmd.TrimFillets), Cmd.TrimFillets);
+            Item(sel.DropDownItems, "Optimize selection", () => Execute(Cmd.Optimize), Cmd.Optimize);
+
+            // Regions
+            var regs = Item(m.Items, "Regions", null);
+            foreach (var r in S.Regions.Regions)
+            {
+                var rr = r;
+                var it = Item(regs.DropDownItems, $"{r.Name}  ·  {(r.Fit?.Surface?.Kind.ToString() ?? "not fitted")}" +
+                    (r.FeatureName != null ? "  ✔" : ""), () => { S.ActiveRegion = rr; S.RaiseChanged(); }, null, r == a);
+                using (var b = new Bitmap(16, 16))
+                {
+                    using (var g = Graphics.FromImage(b)) g.Clear(Color.FromArgb(255, Color.FromArgb(r.Color)));
+                    it.Image = new Bitmap(b);
+                }
+            }
+            regs.DropDownItems.Add(new ToolStripSeparator());
+            Item(regs.DropDownItems, "New region", () => Execute(Cmd.NewRegion), Cmd.NewRegion);
+            Item(regs.DropDownItems, "Rename…", RenameActive);
+            Item(regs.DropDownItems, "Change colour…", () => { var r = S.ActiveRegion; if (r != null) ChangeColour(r); });
+            Item(regs.DropDownItems, "Delete region", DeleteActiveRegion);
+            Item(regs.DropDownItems, "Show region list", () => Execute(Cmd.ShowRegions));
+            m.Items.Add(new ToolStripSeparator());
+
+            // Fit and build
+            var type = Item(m.Items, "Surface type", null);
+            foreach (var req in (FitRequest[])Enum.GetValues(typeof(FitRequest)))
+            {
+                var rq = req;
+                var it = Item(type.DropDownItems, rq.ToString(), () => { if (S.ActiveRegion != null) { S.ActiveRegion.Request = rq; S.RaiseChanged(); } }, null, a?.Request == rq);
+                it.Image = ShapeIcons.Draw(rq);
+            }
+            Item(m.Items, "Fit + grow", () => Execute(Cmd.FitAndGrow), Cmd.FitAndGrow);
+            var create = Item(m.Items, "Create", null, Cmd.CreateSurface);
+            Item(create.DropDownItems, "Fitted surface", () => Execute(Cmd.CreateSurface), Cmd.CreateSurface);
+            Item(create.DropDownItems, "Sketch + extruded surface", () => Execute(Cmd.CreateExtrude), Cmd.CreateExtrude);
+            Item(create.DropDownItems, "Sketch + revolved surface", () => Execute(Cmd.CreateRevolve), Cmd.CreateRevolve);
+            Item(m.Items, "Next feature", () => Execute(Cmd.NextFeature), Cmd.NextFeature);
+            m.Items.Add(new ToolStripSeparator());
+            Item(m.Items, "Reverse Engineer…", () => Execute(Cmd.ReverseEngineer), Cmd.ReverseEngineer);
+            Item(m.Items, "Stop painting (Esc)", () => SetTool(PaintTool.None), Cmd.ToolOff);
+            m.Show(screen);
+        }
+
+        /// <summary>A menu row with a label and a number box (changes apply as you type or spin).</summary>
+        private ToolStripItem NumberItem(string label, decimal min, decimal max, int decimals, decimal value, Action<decimal> changed, string tip)
+        {
+            var row = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty, BackColor = Color.Transparent };
+            row.Controls.Add(new Label { Text = label, AutoSize = true, Margin = new Padding(0, 5, 4, 0) });
+            var n = new NumericUpDown { Minimum = min, Maximum = max, DecimalPlaces = decimals, Width = 70 };
+            n.Value = Math.Max(min, Math.Min(max, Math.Round(value, decimals)));
+            n.ValueChanged += (s, e) => changed(n.Value);
+            row.Controls.Add(n);
+            return new ToolStripControlHost(row) { ToolTipText = tip, AutoSize = true };
+        }
+
+        private void RenameActive()
+        {
+            var r = S.ActiveRegion;
+            if (r == null) return;
+            string name = Prompt("Rename region", "Name:", r.Name);
+            if (string.IsNullOrWhiteSpace(name)) return;
+            r.Name = name.Trim();
+            S.RaiseChanged();
+        }
+
+        private string Prompt(string title, string label, string value)
+        {
+            using (var f = new Form
+            {
+                Text = title, FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false,
+                StartPosition = FormStartPosition.CenterScreen, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ShowInTaskbar = false, Font = Font, Padding = new Padding(8)
+            })
+            {
+                var box = new TextBox { Text = value, Width = 220 };
+                var ok = new Button { Text = "OK", DialogResult = DialogResult.OK };
+                var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel };
+                var flow = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, Dock = DockStyle.Fill };
+                flow.Controls.Add(new Label { Text = label, AutoSize = true });
+                flow.Controls.Add(box);
+                flow.Controls.Add(Row(ok, cancel));
+                f.Controls.Add(flow);
+                f.AcceptButton = ok; f.CancelButton = cancel;
+                return f.ShowDialog(_addin.MainWindow) == DialogResult.OK ? box.Text : null;
+            }
+        }
+
         private void ShowSettings()
         {
             if (_settingsForm == null || _settingsForm.IsDisposed)
@@ -1077,7 +1218,7 @@ namespace MeshFit.SolidWorks
                 _settingsForm.Controls.Add(_settingsBox);
                 _settingsForm.FormClosing += (s, e) => { if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; _settingsForm.Hide(); } };
             }
-            if (!_settingsForm.Visible) _settingsForm.Show(this);
+            if (!_settingsForm.Visible) _settingsForm.Show(_addin.MainWindow);
             _settingsForm.Activate();
         }
 
@@ -1150,7 +1291,7 @@ namespace MeshFit.SolidWorks
             if (_positionDialog == null || _positionDialog.IsDisposed)
             {
                 _positionDialog = new PositionDialog(_addin);
-                _positionDialog.Show(this);
+                _positionDialog.Show(_addin.MainWindow);
             }
             else _positionDialog.Activate();
         }
@@ -1196,7 +1337,9 @@ namespace MeshFit.SolidWorks
 
         // ================================================================== files / output
 
-        private void LoadMesh()
+        private void LoadMesh() => LoadMesh(null);
+
+        private void LoadMesh(Action after)
         {
             using (var dlg = new OpenFileDialog { Filter = "Meshes (*.stl;*.obj;*.ply)|*.stl;*.obj;*.ply|All files|*.*" })
             {
@@ -1217,6 +1360,7 @@ namespace MeshFit.SolidWorks
                     _addin.InstallMesh(mesh, file, scale);
                     SetTool(PaintTool.SmartFill);
                     SetStatus("Mesh loaded. Click or drag on a smooth area to paint the first region.");
+                    after?.Invoke();
                 });
             }
         }

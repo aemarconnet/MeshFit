@@ -1,4 +1,6 @@
 using System;
+using System.Windows.Forms;
+using SolidWorks.Interop.sldworks;
 
 namespace MeshFit.SolidWorks
 {
@@ -16,7 +18,13 @@ namespace MeshFit.SolidWorks
                 _page = new ReverseEngineerPage(this);
                 Session.Changed += QueuePageRefresh;
             }
-            _page.Show();
+            try { _page.Show(); }
+            catch (Exception ex)
+            {
+                // Never fail silently: the ribbon button would look unwired.
+                MessageBox.Show(MainWindow, "The Reverse Engineer page could not be opened:\n" + ex.Message, "MeshFit",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         /// <summary>Session.Changed fires for every brush dab: coalesce page refreshes onto the UI thread.</summary>
@@ -35,6 +43,39 @@ namespace MeshFit.SolidWorks
         }
 
         internal void Do(Cmd c) => _control?.Execute(c);
+
+        /// <summary>The SOLIDWORKS main window: owner for MeshFit windows so they stay in front of it.</summary>
+        internal IWin32Window MainWindow
+        {
+            get
+            {
+                try
+                {
+                    long h = ((IFrame)_app.Frame()).GetHWndx64();
+                    if (h != 0) return new Win32Window(new IntPtr(h));
+                }
+                catch { /* fall back to the task pane */ }
+                return _control;
+            }
+        }
+
+        private sealed class Win32Window : IWin32Window
+        {
+            public Win32Window(IntPtr h) { Handle = h; }
+            public IntPtr Handle { get; }
+        }
+
+        /// <summary>Mirrors MeshFit messages in the SOLIDWORKS status bar (visible even when the task pane is closed).</summary>
+        internal void StatusBar(string msg)
+        {
+            try { ((IFrame)_app?.Frame())?.SetStatusBarText("MeshFit: " + msg); } catch { }
+        }
+
+        /// <summary>Opens the MeshFit task pane.</summary>
+        internal void ShowTaskPane()
+        {
+            try { _pane?.ShowView(); } catch { }
+        }
 
         internal void SetToolFromPage(PaintTool t) => _control?.SetToolExternal(t);
 

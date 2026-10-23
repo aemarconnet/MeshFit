@@ -32,7 +32,15 @@ that doesn't match, MeshFit falls back to an exact rational B-spline.
   - Pick region makes the region under the cursor the active one.
   - Grow ring and Shrink ring add or remove one band of triangles at the region edge.
   - Undo and redo cover every paint step, plus region delete, merge and auto segment.
-  - A MeshFit submenu and context toolbar in the SOLIDWORKS right-click menu.
+  - **Right-click while painting** opens the MeshFit paint menu. It has:
+    - The paint tools and Remove mode.
+    - Number boxes for the brush Ø and the smart-fill edge angle, and Stop at fillets.
+    - **Clear selection**, Undo, and selection tools (fill islands, clean up, grow/shrink, fillets,
+      optimize).
+    - A **Regions** submenu: switch, new, rename, colour, delete, and open the region list.
+    - Surface type, Fit + grow, Create (surface / extruded / revolved) and Next feature.
+  - **Delete** in the view clears the active region's selection (undoable).
+  - When no paint tool is active, SOLIDWORKS's own right-click menu also has a MeshFit submenu.
   - Auto segment splits the unpainted mesh into smooth patches.
 - **Mouse handling while painting**
   - A paint tool takes the left mouse button directly, so SOLIDWORKS doesn't draw a selection box.
@@ -127,7 +135,8 @@ MeshFit adds a **MeshFit** tab to the CommandManager ribbon with these groups:
 **Reverse Engineer** opens a PropertyManager that works like a native SOLIDWORKS feature. Its
 message box at the top always says what to do next. It has these groups:
 
-1. **Regions.** A running list of every region, always at the top. Each line shows:
+1. **Regions.** A running list of every region, always at the top, with a name box to rename the
+   active region and **Clear selection**. Each line shows:
    - **Status:** ✔ surface created, ○ fitted within tolerance, ⚠ outside tolerance, · not fitted.
    - **Name.**
    - **Type and main size**, e.g. `Cylinder R25`.
@@ -158,8 +167,16 @@ message box at the top always says what to do next. It has these groups:
 steps. **Esc** cancels a running fit.
 
 The task pane is now a companion. It has the region list, the progress strip, the deviation legend
-and readout, and the reports. Its **Next ▶** button and the right-click context toolbar give the
-same steps outside the PropertyManager.
+and readout, and the reports. Its **Next ▶** button and the right-click paint menu give the same
+steps outside the PropertyManager. The **Regions** ribbon button opens it on the region list.
+
+To keep the ribbon narrow:
+- Only Reverse Engineer, Fit + Grow, Surface and Next Feature are large buttons.
+- Paint tools and a few key commands are stacked three high with their names.
+- Everything else is an icon with a tooltip.
+
+Every MeshFit message also shows in the SOLIDWORKS status bar, so you get feedback with the task
+pane closed. **Reverse Engineer** without a mesh asks for a mesh file first, then opens the page.
 
 ### Clean geometry
 
@@ -268,8 +285,8 @@ a wheel-arch lip:
      every Smart fill, islands up to 500 triangles are filled automatically; you can change that
      limit in the advanced settings.
    - **Grow ring / Shrink ring** add or remove one band of triangles at the region's edge.
-   - **Right-click menu:** right-click in the graphics area. The *MeshFit* submenu and the context
-     toolbar hold the tools, Add/Remove, Undo, New region, Fill islands and Fit + grow.
+   - **Right-click menu:** right-click in the graphics area while painting. The menu has the tools,
+     brush Ø and edge angle, Clear selection, regions, surface type, Fit + grow, Create and Next.
 3. **Pick the surface type** with the shape buttons (Auto, Plane, Sphere, Cylinder, Cone, Torus,
    Free), then set the tolerance in mm. Typical values are 0.05–0.2 mm for a good scan.
 4. Click **Fit + grow**. MeshFit fits the region, grows it to every connected triangle within

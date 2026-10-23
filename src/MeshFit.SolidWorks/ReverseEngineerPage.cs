@@ -23,7 +23,7 @@ namespace MeshFit.SolidWorks
     {
         private enum Id
         {
-            GFeature = 1, Region, NewRegion, DeleteRegion, RegionSummary,
+            GFeature = 1, Region, NewRegion, DeleteRegion, RegionSummary, RegionName, ClearRegion,
             GPaint = 10, OptSmart, OptBrush, OptFillet, OptShell, OptPick, OptOff, Remove, Diameter, Angle, FillIslands, CleanUp, GrowRing, ShrinkRing,
             GSurface = 40, TypeAuto, TypePlane, TypeSphere, TypeCylinder, TypeCone, TypeTorus, TypeFree, TypeLabel, Tolerance, Clean, StopFillets, FitGrow, Result,
             GCreate = 70, CreateSurface, CreateExtrude, CreateRevolve, NextAfterOk,
@@ -38,6 +38,7 @@ namespace MeshFit.SolidWorks
 
         private PropertyManagerPageListbox _region;
         private PropertyManagerPageLabel _regionSummary;
+        private PropertyManagerPageTextbox _regionName;
         private string[] _regionItems = new string[0];
         private readonly Dictionary<Id, PropertyManagerPageOption> _tools = new Dictionary<Id, PropertyManagerPageOption>();
         private PropertyManagerPageCheckbox _remove, _clean, _stopFillets, _nextAfterOk, _showDev, _showCurv, _showPrev, _showMesh;
@@ -79,7 +80,7 @@ namespace MeshFit.SolidWorks
                              swPropertyManagerPageOptions_e.swPropertyManagerOptions_LockedPage |
                              swPropertyManagerPageOptions_e.swPropertyManagerOptions_PushpinButton);
             _page = _addin.App.CreatePropertyManagerPage("Reverse Engineer", opts, this, ref err) as PropertyManagerPage2;
-            if (_page == null) { S.Say("SOLIDWORKS could not create the PropertyManager page (error " + err + ")."); return; }
+            if (_page == null) throw new InvalidOperationException("SOLIDWORKS could not create the PropertyManager page (error " + err + "). Open a part document and try again.");
             Build();
             _open = true;
             S.EnsureRegion();
@@ -103,6 +104,8 @@ namespace MeshFit.SolidWorks
                 "All regions: surface type, main size, largest deviation and status (✔ = surface created, ⚠ = outside tolerance). Click to make a region active.");
             if (_region != null) _region.Height = 120;
             _regionSummary = Add<PropertyManagerPageLabel>(gf, Id.RegionSummary, swPropertyManagerPageControlType_e.swControlType_Label, "", "Totals");
+            _regionName = Add<PropertyManagerPageTextbox>(gf, Id.RegionName, swPropertyManagerPageControlType_e.swControlType_Textbox, "", "Name of the active region (type to rename)");
+            Add<PropertyManagerPageButton>(gf, Id.ClearRegion, swPropertyManagerPageControlType_e.swControlType_Button, "Clear selection", "Unselect every triangle of the active region (Delete key in the view; Undo restores it)");
             Add<PropertyManagerPageButton>(gf, Id.NewRegion, swPropertyManagerPageControlType_e.swControlType_Button, "New region", "Start a new region for the next feature");
             Add<PropertyManagerPageButton>(gf, Id.DeleteRegion, swPropertyManagerPageControlType_e.swControlType_Button, "Delete region", "Delete the active region (Undo restores it)");
 
@@ -201,6 +204,7 @@ namespace MeshFit.SolidWorks
                         if (items.Length > 0) _region.AddItems(items);
                         _regionItems = items;
                     }
+                    if (_regionName != null && S.ActiveRegion != null && _regionName.Text != S.ActiveRegion.Name) _regionName.Text = S.ActiveRegion.Name;
                     int idx = regions.IndexOf(S.ActiveRegion);
                     if (idx >= 0 && _region.CurrentSelection != idx) _region.CurrentSelection = (short)idx;
                     if (_regionSummary != null)
@@ -300,6 +304,7 @@ namespace MeshFit.SolidWorks
             {
                 case Id.NewRegion: _addin.Do(Cmd.NewRegion); break;
                 case Id.DeleteRegion: _addin.DeleteActiveRegion(); break;
+                case Id.ClearRegion: _addin.Do(Cmd.ClearRegion); break;
                 case Id.FillIslands: _addin.Do(Cmd.FillIslands); break;
                 case Id.CleanUp: _addin.Do(Cmd.CleanUp); break;
                 case Id.GrowRing: _addin.Do(Cmd.GrowRing); break;
@@ -371,7 +376,12 @@ namespace MeshFit.SolidWorks
         // ---- remaining interface members
         public void OnGroupExpand(int id, bool expanded) { }
         public void OnGroupCheck(int id, bool check) { }
-        public void OnTextboxChanged(int id, string text) { }
+        public void OnTextboxChanged(int id, string text)
+        {
+            if (_updating || (Id)id != Id.RegionName || S.ActiveRegion == null || string.IsNullOrWhiteSpace(text)) return;
+            S.ActiveRegion.Name = text.Trim();
+            S.RaiseChanged();
+        }
         public void OnComboboxEditChanged(int id, string text) { }
         public void OnListboxSelectionChanged(int id, int item)
         {

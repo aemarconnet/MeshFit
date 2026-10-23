@@ -19,7 +19,7 @@ namespace MeshFit.SolidWorks
     {
         private readonly SwAddin _addin;
         private Session S => _addin.Session;
-        private readonly ToolTip _tips = new ToolTip { AutoPopDelay = 15000 };
+        private readonly HoverTips _tips = new HoverTips();
         private readonly NumericUpDown[] _move = new NumericUpDown[3];
         private readonly NumericUpDown[] _rot = new NumericUpDown[3];
         private ComboBox _pivot;
@@ -59,7 +59,7 @@ namespace MeshFit.SolidWorks
 
         private void Build()
         {
-            var tabs = new TabControl { Dock = DockStyle.Fill, ShowToolTips = true };
+            var tabs = new TabControl { Dock = DockStyle.Fill, ShowToolTips = false };
             var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.TopDown, Padding = new Padding(4) };
             Controls.Add(tabs);
             Controls.Add(bottom);

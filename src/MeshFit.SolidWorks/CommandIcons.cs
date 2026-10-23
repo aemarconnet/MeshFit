@@ -178,6 +178,14 @@ namespace MeshFit.SolidWorks
                             case Cmd.TypeSphere: case Cmd.TypeTorus: case Cmd.TypeFreeform:
                                 using (var shape = ShapeIcons.Draw(SwAddin.TypeOf(cmd).Value)) g.DrawImage(shape, 0, 0, 20, 20);
                                 break;
+                            case Cmd.ClearRegion: // eraser
+                                g.FillPolygon(fill, new[] { new PointF(3, 13), new PointF(11, 4), new PointF(17, 9), new PointF(9, 18) });
+                                g.DrawLine(red, 3, 18, 18, 18);
+                                break;
+                            case Cmd.ShowRegions: // list with colour swatches
+                                g.FillRectangle(Brushes.OrangeRed, 2, 3, 4, 4); g.FillRectangle(Brushes.SeaGreen, 2, 9, 4, 4); g.FillRectangle(Brushes.RoyalBlue, 2, 15, 4, 4);
+                                g.DrawLine(pen, 8, 5, 18, 5); g.DrawLine(pen, 8, 11, 18, 11); g.DrawLine(pen, 8, 17, 18, 17);
+                                break;
                             default:
                                 g.FillEllipse(fill, 4, 4, 12, 12);
                                 break;

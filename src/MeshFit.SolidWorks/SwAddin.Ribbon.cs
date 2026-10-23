@@ -30,6 +30,8 @@ namespace MeshFit.SolidWorks
             (Cmd.ToolPick, "Pick Region", "Click painted triangles to make their region active"),
             (Cmd.ToolOff, "Paint Off", "Stop painting; SOLIDWORKS works normally (Esc)"),
             (Cmd.ToggleMode, "Remove", "Pressed: the tools unselect triangles instead of adding them (Shift = temporary)"),
+            (Cmd.ClearRegion, "Clear Selection", "Unselect every triangle of the active region (Delete key in the view; Undo restores it)"),
+            (Cmd.ShowRegions, "Regions", "Show the region list (rename, recolour, merge, delete)"),
             (Cmd.NewRegion, "New Region", "Start a new region for the next feature"),
             (Cmd.FillIslands, "Fill Islands", "Fill unpainted islands enclosed by the active region"),
             (Cmd.CleanUp, "Clean Up", "Remove specks, fill holes and smooth the jagged brush edge"),
@@ -63,8 +65,13 @@ namespace MeshFit.SolidWorks
 
         private static readonly Cmd[] LargeButtons =
         {
-            Cmd.ReverseEngineer, Cmd.LoadMesh, Cmd.ToolSmartFill, Cmd.ToolBrush, Cmd.FitAndGrow,
-            Cmd.CreateSurface, Cmd.CreateExtrude, Cmd.CreateRevolve, Cmd.NextFeature, Cmd.AnalyzeCad,
+            Cmd.ReverseEngineer, Cmd.FitAndGrow, Cmd.CreateSurface, Cmd.NextFeature,
+        };
+
+        private static readonly Cmd[] NamedButtons =
+        {
+            Cmd.LoadMesh, Cmd.PositionMesh, Cmd.ToolSmartFill, Cmd.ToolBrush, Cmd.ToolFillet,
+            Cmd.ToggleMode, Cmd.ClearRegion, Cmd.ShowRegions, Cmd.CreateExtrude, Cmd.CreateRevolve,
         };
 
         private void AddRibbon(int cookie)
@@ -97,12 +104,10 @@ namespace MeshFit.SolidWorks
                 if (tab != null) _cmdMgr.RemoveCommandTab((CommandTab)tab);
                 tab = _cmdMgr.AddCommandTab(docType, RibbonTitle);
                 // Mesh | Select | Fit | Build | Analyze | Files
-                AddBox(tab, grp, index, new[] { 0, 1, 2, 3 });
-                AddBox(tab, grp, index, new[] { 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 });
-                AddBox(tab, grp, index, new[] { 15, 16, 17, 18, 19, 20, 21, 22, 23, 24 });
-                AddBox(tab, grp, index, new[] { 25, 26, 27, 28, 29, 30 });
-                AddBox(tab, grp, index, new[] { 31, 32, 33, 34 });
-                AddBox(tab, grp, index, new[] { 35, 36, 37, 38, 39 });
+                var starts = new[] { Cmd.ReverseEngineer, Cmd.ToolSmartFill, Cmd.TypeAuto, Cmd.CreateSurface, Cmd.AnalyzeFillet, Cmd.ExportIges }
+                    .Select(c => Array.FindIndex(RibbonCommands, x => x.cmd == c)).Concat(new[] { RibbonCommands.Length }).ToArray();
+                for (int b = 0; b + 1 < starts.Length; b++)
+                    AddBox(tab, grp, index, Enumerable.Range(starts[b], starts[b + 1] - starts[b]).ToArray());
             }
         }
 
@@ -110,10 +115,13 @@ namespace MeshFit.SolidWorks
         {
             var box = tab.AddCommandTabBox();
             var ids = which.Select(i => grp.get_CommandID(index[i])).ToArray();
-            // The main steps get large buttons; the rest stack three high with their text beside them.
+            // Keep the tab narrow: main steps get large buttons, tools stack three high with their names,
+            // everything else is a small icon (with its tooltip) stacked three high.
             var text = which.Select(i => (int)(LargeButtons.Contains(RibbonCommands[i].cmd)
                 ? swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow
-                : swCommandTabButtonTextDisplay_e.swCommandTabButton_TextHorizontal)).ToArray();
+                : NamedButtons.Contains(RibbonCommands[i].cmd)
+                    ? swCommandTabButtonTextDisplay_e.swCommandTabButton_TextHorizontal
+                    : swCommandTabButtonTextDisplay_e.swCommandTabButton_NoText)).ToArray();
             box.AddCommands(ids, text);
         }
 
@@ -155,6 +163,7 @@ namespace MeshFit.SolidWorks
                 case Cmd.Settings:
                 case Cmd.ReverseEngineer:
                 case Cmd.ToggleZebra:
+                case Cmd.ShowRegions:
                     return 1;
             }
             if (!s.HasMesh) return 0;
@@ -208,6 +217,7 @@ namespace MeshFit.SolidWorks
         public void OnMenuTypeFreeform() => Menu(Cmd.TypeFreeform);
         public void OnMenuFit() => Menu(Cmd.Fit);
         public void OnMenuFitAll() => Menu(Cmd.FitAll);
+        public void OnMenuShowRegions() => Menu(Cmd.ShowRegions);
         public void OnMenuToggleZebra() => Menu(Cmd.ToggleZebra);
         public void OnMenuExportIges() => Menu(Cmd.ExportIges);
         public void OnMenuSaveProject() => Menu(Cmd.SaveProject);
@@ -238,6 +248,8 @@ namespace MeshFit.SolidWorks
         public int OnRibbonEnableFitAndGrow() => RibbonEnable(Cmd.FitAndGrow);
         public int OnRibbonEnableFit() => RibbonEnable(Cmd.Fit);
         public int OnRibbonEnableFitAll() => RibbonEnable(Cmd.FitAll);
+        public int OnRibbonEnableClearRegion() => RibbonEnable(Cmd.ClearRegion);
+        public int OnRibbonEnableShowRegions() => RibbonEnable(Cmd.ShowRegions);
         public int OnRibbonEnableCreateSurface() => RibbonEnable(Cmd.CreateSurface);
         public int OnRibbonEnableCreateExtrude() => RibbonEnable(Cmd.CreateExtrude);
         public int OnRibbonEnableCreateRevolve() => RibbonEnable(Cmd.CreateRevolve);

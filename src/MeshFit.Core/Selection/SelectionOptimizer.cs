@@ -110,7 +110,7 @@ namespace MeshFit.Core.Selection
         private static List<SelectionCandidate> RunAll(List<Func<SelectionCandidate>> jobs, CancellationToken ct)
         {
             var results = new SelectionCandidate[jobs.Count];
-            Parallel.For(0, jobs.Count, new ParallelOptions { CancellationToken = ct }, i =>
+            Parallel.For(0, jobs.Count, Work.Options(ct), i =>
             {
                 try { results[i] = jobs[i](); }
                 catch (OperationCanceledException) { throw; }

@@ -147,6 +147,37 @@ namespace MeshFit.SolidWorks
                                 g.DrawPolygon(pen, new[] { new PointF(2, 16), new PointF(8, 4), new PointF(14, 16) });
                                 g.DrawLine(red, 12, 3, 18, 9); g.DrawLine(red, 18, 3, 12, 9);
                                 break;
+                            case Cmd.ToolFillet: // concave blend between two faces
+                                g.DrawLine(pen, 2, 3, 2, 10); g.DrawArc(red, 2, 4, 12, 12, 90, 90); g.DrawLine(pen, 8, 16, 18, 16);
+                                break;
+                            case Cmd.ToolFillShell: // filled connected blob
+                                g.FillPolygon(fill, new[] { new PointF(3, 6), new PointF(10, 2), new PointF(17, 6), new PointF(16, 15), new PointF(8, 18), new PointF(2, 13) });
+                                g.DrawPolygon(pen, new[] { new PointF(3, 6), new PointF(10, 2), new PointF(17, 6), new PointF(16, 15), new PointF(8, 18), new PointF(2, 13) });
+                                break;
+                            case Cmd.ToolPick: // arrow cursor
+                                g.FillPolygon(fill, new[] { new PointF(4, 2), new PointF(4, 16), new PointF(8, 12), new PointF(11, 18), new PointF(13, 17), new PointF(10, 11), new PointF(15, 11) });
+                                g.DrawPolygon(pen, new[] { new PointF(4, 2), new PointF(4, 16), new PointF(8, 12), new PointF(11, 18), new PointF(13, 17), new PointF(10, 11), new PointF(15, 11) });
+                                break;
+                            case Cmd.ToggleMode: // minus = remove
+                                g.DrawEllipse(pen, 2, 2, 16, 16);
+                                g.DrawLine(red, 6, 10, 14, 10);
+                                break;
+                            case Cmd.Fit: // points + fitted curve
+                                g.DrawBezier(pen, 2, 15, 7, 4, 13, 4, 18, 15);
+                                foreach (var (x, y) in new[] { (4f, 10f), (9f, 7f), (14f, 9f), (17f, 13f) }) g.FillEllipse(Brushes.OrangeRed, x - 1.5f, y - 1.5f, 3, 3);
+                                break;
+                            case Cmd.FitAll: // several fitted curves
+                                g.DrawBezier(pen, 2, 9, 7, 2, 13, 2, 18, 9);
+                                g.DrawBezier(pen, 2, 17, 7, 10, 13, 10, 18, 17);
+                                break;
+                            case Cmd.CreateSurface: // shaded surface patch
+                                g.FillPolygon(fill, new[] { new PointF(2, 14), new PointF(7, 5), new PointF(18, 6), new PointF(14, 16) });
+                                g.DrawPolygon(pen, new[] { new PointF(2, 14), new PointF(7, 5), new PointF(18, 6), new PointF(14, 16) });
+                                break;
+                            case Cmd.TypeAuto: case Cmd.TypePlane: case Cmd.TypeCylinder: case Cmd.TypeCone:
+                            case Cmd.TypeSphere: case Cmd.TypeTorus: case Cmd.TypeFreeform:
+                                using (var shape = ShapeIcons.Draw(SwAddin.TypeOf(cmd).Value)) g.DrawImage(shape, 0, 0, 20, 20);
+                                break;
                             default:
                                 g.FillEllipse(fill, 4, 4, 12, 12);
                                 break;

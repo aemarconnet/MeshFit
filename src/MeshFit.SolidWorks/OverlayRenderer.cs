@@ -21,6 +21,10 @@ namespace MeshFit.SolidWorks
         private float[] _paintV = new float[0]; private byte[] _paintC = new byte[0];
         private float[] _lineV = new float[0]; private byte[] _lineC = new byte[0];
         private object _meshBuiltFor;
+        private int _meshVersion;
+        // The grey/curvature mesh layer is static between rebuilds: compile it once per GL context into a
+        // display list instead of streaming millions of vertices from client memory on every frame.
+        private readonly Dictionary<IntPtr, (uint list, int version)> _meshLists = new Dictionary<IntPtr, (uint, int)>();
         private object _previewMesh;
         // Preview lines per region, valid while the fit and the triangle count are unchanged.
         private readonly Dictionary<int, (FitResult fit, int tris, List<float> v, List<byte> c)> _previewCache =
@@ -57,7 +61,7 @@ namespace MeshFit.SolidWorks
 
                 // Painted regions sit slightly in front of the mesh (and of a SOLIDWORKS mesh body).
                 Gl.glPolygonOffset(-1f, -2f);
-                if (_s.ShowMesh || _s.ShowCurvature || CadView) DrawArrays(Gl.GL_TRIANGLES, _meshV, _meshC);
+                if (_s.ShowMesh || _s.ShowCurvature || CadView) DrawMeshLayer();
                 Gl.glPolygonOffset(-2f, -4f);
                 DrawArrays(Gl.GL_TRIANGLES, _paintV, _paintC);
 
@@ -70,6 +74,23 @@ namespace MeshFit.SolidWorks
                 Gl.glPopClientAttrib();
                 Gl.glPopAttrib();
             }
+        }
+
+        private void DrawMeshLayer()
+        {
+            if (_meshV.Length == 0) return;
+            var ctx = Gl.wglGetCurrentContext();
+            if (!_meshLists.TryGetValue(ctx, out var entry) || entry.version != _meshVersion)
+            {
+                if (entry.list != 0) Gl.glDeleteLists(entry.list, 1);
+                uint list = Gl.glGenLists(1);
+                if (list == 0) { _meshLists.Remove(ctx); DrawArrays(Gl.GL_TRIANGLES, _meshV, _meshC); return; }
+                Gl.glNewList(list, Gl.GL_COMPILE);
+                DrawArrays(Gl.GL_TRIANGLES, _meshV, _meshC);
+                Gl.glEndList();
+                _meshLists[ctx] = (list, _meshVersion);
+            }
+            Gl.glCallList(_meshLists[ctx].list);
         }
 
         private static void DrawArrays(uint mode, float[] v, byte[] c)
@@ -156,6 +177,7 @@ namespace MeshFit.SolidWorks
             if ((_s.ShowMesh || _s.ShowCurvature || CadView) && !Equals(_meshBuiltFor, key))
             {
                 _meshBuiltFor = key;
+                _meshVersion++;
                 _meshV = new float[nt * 9]; _meshC = new byte[nt * 12];
                 var light = new Vec3(0.3, 0.5, 0.81).Normalized();
                 var curv = _s.ShowCurvature ? _s.Curvature : null;

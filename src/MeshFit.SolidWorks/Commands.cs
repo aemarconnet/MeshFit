@@ -12,6 +12,7 @@ namespace MeshFit.SolidWorks
         BrushBigger, BrushSmaller,
         Fit, FitAndGrow, CreateSurface, HideSurfaces, ShowSurfaces,
         CreateExtrude, CreateRevolve, NextFeature, StepPaint,
-        ReverseEngineer, LoadMesh, UseBodies, ExportIges, SaveProject, OpenProject, Settings
+        ReverseEngineer, LoadMesh, UseBodies, ExportIges, SaveProject, OpenProject, Settings,
+        TypeAuto, TypePlane, TypeCylinder, TypeCone, TypeSphere, TypeTorus, TypeFreeform, FitAll
     }
 }

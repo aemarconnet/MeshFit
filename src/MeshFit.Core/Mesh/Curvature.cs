@@ -33,7 +33,7 @@ namespace MeshFit.Core.Mesh
             var vmin = new float[nv];
             double r2 = scale * scale;
             int done = 0, step = Math.Max(1, nv / 50);
-            Parallel.For(0, nv, new ParallelOptions { CancellationToken = ct }, () => (new List<int>(), new HashSet<int>()), (v, state, buf) =>
+            Parallel.For(0, nv, Work.Options(ct), () => (new List<int>(), new HashSet<int>()), (v, state, buf) =>
             {
                 var (list, seen) = buf;
                 list.Clear(); seen.Clear();

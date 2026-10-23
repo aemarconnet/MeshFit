@@ -636,6 +636,14 @@ namespace MeshFit.SolidWorks
                     case Cmd.SaveProject: SaveProject(); break;
                     case Cmd.OpenProject: OpenProject(); break;
                     case Cmd.Settings: ShowSettings(); break;
+                    case Cmd.FitAll: FitRegions(All()); break;
+                    case Cmd.TypeAuto: case Cmd.TypePlane: case Cmd.TypeCylinder: case Cmd.TypeCone:
+                    case Cmd.TypeSphere: case Cmd.TypeTorus: case Cmd.TypeFreeform:
+                        if (!NeedRegion()) break;
+                        S.ActiveRegion.Request = SwAddin.TypeOf(c).Value;
+                        S.RaiseChanged();
+                        SetStatus($"'{S.ActiveRegion.Name}' will be fitted as {(S.ActiveRegion.Request == FitRequest.Auto ? "the simplest type within tolerance" : S.ActiveRegion.Request.ToString())}. Click Fit + grow.");
+                        break;
                     case Cmd.CreateExtrude: CreateSketched(revolve: false); break;
                     case Cmd.CreateRevolve: CreateSketched(revolve: true); break;
                     case Cmd.PositionMesh: PositionMesh(); break;
@@ -1200,6 +1208,9 @@ namespace MeshFit.SolidWorks
                 {
                     Report($"Reading {System.IO.Path.GetFileName(file)}", null);
                     mesh = MeshFit.Core.Mesh.MeshIO.Load(file, scale);
+                    Token.ThrowIfCancellationRequested();
+                    Report("Building the search tree", null);
+                    _ = mesh.Bvh;
                     return $"Read {mesh.TriangleCount:N0} triangles.";
                 }, background: true, title: "Loading mesh", then: () =>
                 {

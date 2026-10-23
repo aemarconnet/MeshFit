@@ -110,16 +110,31 @@ dotnet build src/MeshFit.SolidWorks -c Release -p:SolidWorksInteropDir="C:\Progr
 
 MeshFit adds a **MeshFit** tab to the CommandManager ribbon with these groups:
 
-- **Mesh:** Reverse Engineer, Load Mesh, Mesh Body and Position Mesh.
-- **Selection and analysis:** Optimize Selection, Measure Fillet, Boundary Curves, Accuracy and
-  Zebra.
-- **Output and files:** Hide/Show Surfaces, Export IGES, Save/Open Project, Settings and Unload
-  Mesh.
+- **Mesh:** Reverse Engineer, Load Mesh, Mesh Body, Position Mesh.
+- **Select:**
+  - Paint tools: Smart Fill, Brush, Fillet, Shell, Pick Region and Paint Off. The active tool shows
+    as pressed.
+  - **Remove** toggle.
+  - New Region, Fill Islands, Clean Up and Optimize Selection.
+- **Fit:**
+  - Surface-type buttons: Auto, Plane, Cylinder, Cone, Sphere, Torus and Freeform. The active
+    region's type shows as pressed.
+  - **Fit + Grow**, Fit Only and Fit All.
+- **Build:** Surface, Extruded Surface, Revolved Surface, Next Feature, and Hide/Show Surfaces.
+- **Analyze:** Measure Fillet, Boundary Curves, Accuracy, Zebra.
+- **Files:** Export IGES, Save/Open Project, Settings, Unload Mesh.
 
 **Reverse Engineer** opens a PropertyManager that works like a native SOLIDWORKS feature. Its
 message box at the top always says what to do next. It has these groups:
 
-1. **Feature.** Pick the region, or create or delete one.
+1. **Regions.** A running list of every region, always at the top. Each line shows:
+   - **Status:** ✔ surface created, ○ fitted within tolerance, ⚠ outside tolerance, · not fitted.
+   - **Name.**
+   - **Type and main size**, e.g. `Cylinder R25`.
+   - **Largest deviation.**
+
+   Below the list is a summary of how many regions are painted, fitted and created. Click a line
+   to make that region active. New and Delete buttons are also here.
 2. **Paint.** Choose Smart fill, Brush, Fillet, Shell, Pick or Off. You can also:
    - Switch to **Remove** mode.
    - Set the brush **diameter** and the smart-fill **angle**.

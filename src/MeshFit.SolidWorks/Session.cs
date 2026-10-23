@@ -110,6 +110,7 @@ namespace MeshFit.SolidWorks
             if (Mesh == null || x.IsIdentity()) return;
             var moved = Mesh.Transformed(x);
             Mesh = moved;
+            PrepareMesh(moved);
             Regions.ReplaceMesh(moved);
             foreach (var r in Regions.Regions) if (r.Fit?.Surface != null) r.Fit.Surface = r.Fit.Surface.Transformed(x);
             foreach (var r in Regions.Regions) if (r.Fit?.Alternatives != null)
@@ -175,10 +176,24 @@ namespace MeshFit.SolidWorks
             ActiveRegion = Regions.Regions.FirstOrDefault() ?? Regions.AddRegion();
             MeshDescription = description;
             BrushRadius = Math.Max(mesh.AverageEdgeLength * 4, mesh.Bounds.Diagonal / 100);
+            PrepareMesh(mesh);
             RaiseChanged();
         }
 
         public void RaiseChanged() => Changed?.Invoke();
+
+        /// <summary>Builds the mesh search tree on a worker thread (no-op when built or building).</summary>
+        public static void PrepareMesh(TriMesh m)
+        {
+            if (m == null || m.BvhReady) return;
+            lock (Preparing) { if (!Preparing.Add(m)) return; }
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try { _ = m.Bvh; }
+                finally { lock (Preparing) Preparing.Remove(m); }
+            });
+        }
+        private static readonly HashSet<TriMesh> Preparing = new HashSet<TriMesh>();
         public void Say(string msg) => Status?.Invoke(msg);
 
         // ------------------------------------------------------------------ picking
@@ -188,6 +203,8 @@ namespace MeshFit.SolidWorks
         {
             hit = linePoint;
             if (Mesh == null) return -1;
+            // The search tree is built in the background after loading; never stall SOLIDWORKS waiting for it.
+            if (!Mesh.BvhReady) { PrepareMesh(Mesh); Say("Preparing the mesh for picking…"); return -1; }
             var hits = Mesh.Bvh.LineHits(linePoint, dirTowardViewer);
             if (hits.Count == 0) return -1;
             var front = hits[hits.Count - 1];

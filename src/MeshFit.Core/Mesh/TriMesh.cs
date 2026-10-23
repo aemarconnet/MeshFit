@@ -25,8 +25,19 @@ namespace MeshFit.Core.Mesh
         public BoundingBox Bounds { get; private set; }
         public double AverageEdgeLength { get; private set; }
 
-        private Bvh _bvh;
-        public Bvh Bvh => _bvh ?? (_bvh = new Bvh(this));
+        private volatile Bvh _bvh;
+        private readonly object _bvhLock = new object();
+        /// <summary>Search tree, built on first use (thread-safe; other callers wait for the one building it).</summary>
+        public Bvh Bvh
+        {
+            get
+            {
+                if (_bvh != null) return _bvh;
+                lock (_bvhLock) return _bvh ?? (_bvh = new Bvh(this));
+            }
+        }
+        /// <summary>True once the search tree exists, so a UI thread can avoid blocking on it.</summary>
+        public bool BvhReady => _bvh != null;
 
         public TriMesh(Vec3[] vertices, int[] indices)
         {

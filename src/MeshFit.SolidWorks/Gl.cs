@@ -37,6 +37,12 @@ namespace MeshFit.SolidWorks
         [DllImport(Lib)] public static extern void glColorPointer(int size, uint type, int stride, IntPtr ptr);
         [DllImport(Lib)] public static extern void glDrawArrays(uint mode, int first, int count);
         [DllImport(Lib)] public static extern IntPtr wglGetCurrentContext();
+        [DllImport(Lib)] public static extern uint glGenLists(int range);
+        [DllImport(Lib)] public static extern void glNewList(uint list, uint mode);
+        [DllImport(Lib)] public static extern void glEndList();
+        [DllImport(Lib)] public static extern void glCallList(uint list);
+        [DllImport(Lib)] public static extern void glDeleteLists(uint list, int range);
+        public const uint GL_COMPILE = 0x1300;
 
         public static void Color(int rgb, byte alpha) =>
             glColor4ub((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb, alpha);

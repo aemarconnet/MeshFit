@@ -23,7 +23,7 @@ namespace MeshFit.SolidWorks
     {
         private enum Id
         {
-            GFeature = 1, Region, NewRegion, DeleteRegion,
+            GFeature = 1, Region, NewRegion, DeleteRegion, RegionSummary,
             GPaint = 10, OptSmart, OptBrush, OptFillet, OptShell, OptPick, OptOff, Remove, Diameter, Angle, FillIslands, CleanUp, GrowRing, ShrinkRing,
             GSurface = 40, TypeAuto, TypePlane, TypeSphere, TypeCylinder, TypeCone, TypeTorus, TypeFree, TypeLabel, Tolerance, Clean, StopFillets, FitGrow, Result,
             GCreate = 70, CreateSurface, CreateExtrude, CreateRevolve, NextAfterOk,
@@ -36,7 +36,9 @@ namespace MeshFit.SolidWorks
         private bool _updating, _open, _reopen;
         private int _closeReason;
 
-        private PropertyManagerPageCombobox _region;
+        private PropertyManagerPageListbox _region;
+        private PropertyManagerPageLabel _regionSummary;
+        private string[] _regionItems = new string[0];
         private readonly Dictionary<Id, PropertyManagerPageOption> _tools = new Dictionary<Id, PropertyManagerPageOption>();
         private PropertyManagerPageCheckbox _remove, _clean, _stopFillets, _nextAfterOk, _showDev, _showCurv, _showPrev, _showMesh;
         private PropertyManagerPageNumberbox _diameter, _angle, _tolerance;
@@ -95,8 +97,12 @@ namespace MeshFit.SolidWorks
                 g.AddControl2((int)id, (short)type, caption, left, ctl, tip) as T;
 
             // Feature
-            var gf = (PropertyManagerPageGroup)_page.AddGroupBox((int)Id.GFeature, "Feature", vis);
-            _region = Add<PropertyManagerPageCombobox>(gf, Id.Region, swPropertyManagerPageControlType_e.swControlType_Combobox, "", "Region being reverse engineered (the paint goes here)");
+            // Running list of every region: type, size and fit quality. Click one to make it active.
+            var gf = (PropertyManagerPageGroup)_page.AddGroupBox((int)Id.GFeature, "Regions", vis);
+            _region = Add<PropertyManagerPageListbox>(gf, Id.Region, swPropertyManagerPageControlType_e.swControlType_Listbox, "",
+                "All regions: surface type, main size, largest deviation and status (✔ = surface created, ⚠ = outside tolerance). Click to make a region active.");
+            if (_region != null) _region.Height = 120;
+            _regionSummary = Add<PropertyManagerPageLabel>(gf, Id.RegionSummary, swPropertyManagerPageControlType_e.swControlType_Label, "", "Totals");
             Add<PropertyManagerPageButton>(gf, Id.NewRegion, swPropertyManagerPageControlType_e.swControlType_Button, "New region", "Start a new region for the next feature");
             Add<PropertyManagerPageButton>(gf, Id.DeleteRegion, swPropertyManagerPageControlType_e.swControlType_Button, "Delete region", "Delete the active region (Undo restores it)");
 
@@ -185,11 +191,24 @@ namespace MeshFit.SolidWorks
                     (int)swPropertyManagerPageMessageExpanded.swMessageBoxExpand, "MeshFit");
                 if (_region != null && S.Regions != null)
                 {
-                    _region.Clear();
-                    var names = S.Regions.Regions.Select(r => $"{r.Name}  ({r.TriangleCount:N0}){(r.FeatureName != null ? " ✔" : "")}").ToArray();
-                    if (names.Length > 0) _region.AddItems(names);
-                    int idx = S.Regions.Regions.ToList().IndexOf(S.ActiveRegion);
-                    if (idx >= 0) _region.CurrentSelection = (short)idx;
+                    var regions = S.Regions.Regions.ToList();
+                    double tol = S.FitOptions.Tolerance;
+                    var items = regions.Select(r => RegionLine(r, tol)).ToArray();
+                    // Rebuilding the list on every brush dab would flicker: only when a line changed.
+                    if (!items.SequenceEqual(_regionItems))
+                    {
+                        _region.Clear();
+                        if (items.Length > 0) _region.AddItems(items);
+                        _regionItems = items;
+                    }
+                    int idx = regions.IndexOf(S.ActiveRegion);
+                    if (idx >= 0 && _region.CurrentSelection != idx) _region.CurrentSelection = (short)idx;
+                    if (_regionSummary != null)
+                    {
+                        int painted = regions.Count(r => r.TriangleCount > 0), built = regions.Count(r => r.FeatureName != null);
+                        int bad = regions.Count(r => r.Fit?.Surface != null && r.Fit.Stats.P95 > tol);
+                        _regionSummary.Caption = $"{painted} painted · {regions.Count(r => r.Fit != null)} fitted · {built} created" + (bad > 0 ? $" · {bad} ⚠" : "");
+                    }
                 }
                 var tool = S.Tool;
                 foreach (var kv in _tools)
@@ -217,6 +236,25 @@ namespace MeshFit.SolidWorks
             }
             catch { /* page closing */ }
             finally { _updating = false; }
+        }
+
+        /// <summary>One list line: "✔ Hood top · Cylinder R25 · 0.042 mm".</summary>
+        private static string RegionLine(Region r, double tol)
+        {
+            var inv = CultureInfo.InvariantCulture;
+            string mark = r.FeatureName != null ? "✔" : r.Fit?.Surface != null ? (r.Fit.Stats.P95 > tol ? "⚠" : "○") : "·";
+            string type;
+            switch (r.Fit?.Surface)
+            {
+                case null: type = r.TriangleCount == 0 ? "empty" : r.Request == FitRequest.Auto ? "not fitted" : r.Request + "?"; break;
+                case SphereSurface sp: type = "Sphere R" + (sp.Radius * 1000).ToString("0.###", inv); break;
+                case CylinderSurface c: type = "Cylinder R" + (c.Radius * 1000).ToString("0.###", inv); break;
+                case ConeSurface co: type = "Cone " + (co.HalfAngle * 180 / Math.PI).ToString("0.##", inv) + "°"; break;
+                case TorusSurface t: type = "Torus R" + (t.MajorRadius * 1000).ToString("0.##", inv) + "/r" + (t.MinorRadius * 1000).ToString("0.##", inv); break;
+                case var f: type = f.Kind.ToString(); break;
+            }
+            string dev = r.Fit?.Surface != null ? " · " + (r.Fit.Stats.MaxAbs * 1000).ToString("0.###", inv) + " mm" : "";
+            return $"{mark} {r.Name} · {type}{dev}";
         }
 
         private static string ResultText(Region r)
@@ -318,11 +356,7 @@ namespace MeshFit.SolidWorks
             }
         }
 
-        public void OnComboboxSelectionChanged(int id, int item)
-        {
-            if (_updating || (Id)id != Id.Region || S.Regions == null) return;
-            if (item >= 0 && item < S.Regions.Regions.Count) { S.ActiveRegion = S.Regions.Regions[item]; S.RaiseChanged(); }
-        }
+        public void OnComboboxSelectionChanged(int id, int item) { }
 
         public void OnUndo() => _addin.Do(Cmd.Undo);
         public void OnRedo() => _addin.Do(Cmd.Redo);
@@ -339,7 +373,12 @@ namespace MeshFit.SolidWorks
         public void OnGroupCheck(int id, bool check) { }
         public void OnTextboxChanged(int id, string text) { }
         public void OnComboboxEditChanged(int id, string text) { }
-        public void OnListboxSelectionChanged(int id, int item) { }
+        public void OnListboxSelectionChanged(int id, int item)
+        {
+            if (_updating || (Id)id != Id.Region || S.Regions == null) return;
+            var regions = S.Regions.Regions.ToList();
+            if (item >= 0 && item < regions.Count && regions[item] != S.ActiveRegion) { S.ActiveRegion = regions[item]; S.RaiseChanged(); }
+        }
         public void OnSelectionboxFocusChanged(int id) { }
         public void OnSelectionboxListChanged(int id, int count) { }
         public void OnSelectionboxCalloutCreated(int id) { }

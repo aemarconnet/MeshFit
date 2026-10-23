@@ -38,7 +38,7 @@ namespace MeshFit.Core.Analysis
             var near = new int[n];
             for (int i = 0; i < n; i++) { dev[i] = float.NaN; near[i] = -1; }
             var list = sampleVertices ?? AllIndices(n);
-            Parallel.For(0, list.Count, i =>
+            Parallel.For(0, list.Count, Work.Options(), i =>
             {
                 int v = list[i];
                 var p = scan.Vertices[v];

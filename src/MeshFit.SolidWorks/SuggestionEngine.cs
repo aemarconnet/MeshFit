@@ -29,7 +29,7 @@ namespace MeshFit.SolidWorks
         public SuggestionEngine(Session s)
         {
             _s = s;
-            _debounce.Tick += (o, e) => { _debounce.Stop(); Start(force: false); };
+            _debounce.Tick += (o, e) => Guarded.Run("suggestions", () => { _debounce.Stop(); Start(force: false); });
         }
 
         private string Fingerprint(Region r) =>
@@ -84,7 +84,7 @@ namespace MeshFit.SolidWorks
                         var list = t.Result;
                         Suggested?.Invoke(r, IsBetter(r, list) || force ? list : new List<SelectionCandidate>());
                     }
-                    if (ui != null) ui.Post(_ => Done(), null); else Done();
+                    if (ui != null) ui.Post(_ => Guarded.Run("suggestions", Done), null); else Guarded.Run("suggestions", Done);
                 });
         }
 

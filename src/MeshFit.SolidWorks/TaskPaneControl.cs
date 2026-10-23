@@ -103,6 +103,7 @@ namespace MeshFit.SolidWorks
             };
             S.HoverChanged += UpdateHoverReadout;
             S.Status += SetStatus;
+            Guarded.Reported += SetStatus;
             StartEscWatcher();
             RefreshAll();
         }
@@ -139,20 +140,20 @@ namespace MeshFit.SolidWorks
             _undo = Btn("↶ Undo", () => Execute(Cmd.Undo), "Undo the last paint step (also region delete/merge)");
             _redo = Btn("↷ Redo", () => Execute(Cmd.Redo), "Redo");
             _activeCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 120, DrawMode = DrawMode.OwnerDrawFixed };
-            _activeCombo.DrawItem += (s, e) =>
+            _activeCombo.DrawItem += (s, e) => Safe(() =>
             {
                 e.DrawBackground();
                 if (e.Index < 0) return;
                 var r = (Region)_activeCombo.Items[e.Index];
                 using (var b = new SolidBrush(Color.FromArgb(255, Color.FromArgb(r.Color)))) e.Graphics.FillRectangle(b, e.Bounds.X + 2, e.Bounds.Y + 2, 10, e.Bounds.Height - 4);
                 TextRenderer.DrawText(e.Graphics, $"{r.Name} ({r.TriangleCount:N0})", e.Font, new Point(e.Bounds.X + 15, e.Bounds.Y + 1), e.ForeColor);
-            };
-            _activeCombo.SelectedIndexChanged += (s, e) =>
+            });
+            _activeCombo.SelectedIndexChanged += (s, e) => Safe(() =>
             {
                 if (_updating || _activeCombo.SelectedItem == null) return;
                 S.ActiveRegion = (Region)_activeCombo.SelectedItem;
                 S.RaiseChanged();
-            };
+            });
             _tips.SetToolTip(_activeCombo, "Active region: the region the tools paint into and the commands act on");
             _cancel = Btn("✖ Cancel (Esc)", CancelWork, "Abort the running operation (same as pressing Esc)");
             _cancel.ForeColor = Color.DarkRed;
@@ -184,19 +185,19 @@ namespace MeshFit.SolidWorks
             foreach (var (tool, text, tip) in tools)
             {
                 var b = Toggle(text, tip);
-                b.Click += (s, e) => Guard(() => SetTool(tool));
+                b.Click += (s, e) => Safe(() => Guard(() => SetTool(tool)));
                 _toolButtons[tool] = b;
                 toolRow.Controls.Add(b);
             }
 
             _addMode = Toggle("+ Add", "Tools add triangles to the active region.");
             _removeMode = Toggle("− Remove", "Tools unselect triangles (hold Shift for a temporary switch).");
-            _addMode.Click += (s, e) => Execute(Cmd.ModeAdd);
-            _removeMode.Click += (s, e) => Execute(Cmd.ModeRemove);
+            _addMode.Click += (s, e) => Safe(() => Execute(Cmd.ModeAdd));
+            _removeMode.Click += (s, e) => Safe(() => Execute(Cmd.ModeRemove));
             _brushDiameter = Num(0.01m, 100000, 20, 2, "Brush diameter in mm. Ctrl or Shift + mouse wheel in the graphics area resizes it.");
-            _brushDiameter.ValueChanged += (s, e) => { if (!_updating) { S.BrushRadius = (double)_brushDiameter.Value / 2000; _addin.Redraw(); } };
+            _brushDiameter.ValueChanged += (s, e) => Safe(() => { if (!_updating) { S.BrushRadius = (double)_brushDiameter.Value / 2000; _addin.Redraw(); } });
             _smartAngle = Num(0.5m, 90, (decimal)S.SmartAngleDeg, 1, "Smart fill stops at edges sharper than this angle (degrees). Lower = stricter.");
-            _smartAngle.ValueChanged += (s, e) => S.SmartAngleDeg = (double)_smartAngle.Value;
+            _smartAngle.ValueChanged += (s, e) => Safe(() => S.SmartAngleDeg = (double)_smartAngle.Value);
             _brushDiameter.Width = _smartAngle.Width = 52;
             var modeRow = Row(_addMode, _removeMode, Lbl("Ø mm"), _brushDiameter, Lbl("∠°"), _smartAngle);
 
@@ -243,7 +244,7 @@ namespace MeshFit.SolidWorks
             _snapDeg = Num(0, 10, 1, 1, "Extrusion directions and revolve axes within this angle (degrees) of X/Y/Z are snapped exactly onto the axis (0 = never)");
             gs.Add(Row(Lbl("Snap sketch directions to X/Y/Z within °"), _snapDeg));
             _islandLimit = Num(0, 1000000, S.AutoFillIslandLimit, 0, "After each Smart fill, enclosed unpainted islands up to this many triangles are filled automatically (0 = off)");
-            _islandLimit.ValueChanged += (s, e) => S.AutoFillIslandLimit = (int)_islandLimit.Value;
+            _islandLimit.ValueChanged += (s, e) => Safe(() => S.AutoFillIslandLimit = (int)_islandLimit.Value);
             gs.Add(Row(Lbl("Auto-fill islands up to"), _islandLimit, Lbl("tris")));
             _margin = Num(0, 200, 10, 0, "How far created surfaces extend past the painted region (% of its size)");
             _rejectOutliers = Check("Reject outliers", true, v => S.FitOptions.RejectOutliers = v, "Ignore stray points when fitting analytic surfaces");
@@ -265,7 +266,7 @@ namespace MeshFit.SolidWorks
             gs.Add(Check("Round dimensions", S.Idealize.RoundDimensions, v => S.Idealize.RoundDimensions = v,
                 "Round radii, angles and positions to the coarsest step (1, 0.5, 0.1 … mm) the scan still agrees with"));
             var snapIdeal = Num(0, 10, (decimal)S.Idealize.SnapAngleDeg, 1, "Directions within this angle (degrees) of an axis or a feature are snapped");
-            snapIdeal.ValueChanged += (s2, e2) => S.Idealize.SnapAngleDeg = (double)snapIdeal.Value;
+            snapIdeal.ValueChanged += (s2, e2) => Safe(() => S.Idealize.SnapAngleDeg = (double)snapIdeal.Value);
             gs.Add(Row(Lbl("Snap within °"), snapIdeal));
             _settingsBox = gs.Box;
 
@@ -280,19 +281,19 @@ namespace MeshFit.SolidWorks
             _regions.Columns.Add("Region", 92); _regions.Columns.Add("Type", 58);
             _regions.Columns.Add("Max dev mm", 66); _regions.Columns.Add("Status", 54);
             _tips.SetToolTip(_regions, "Click to activate, double-click to rename, Ctrl+click to multi-select, right-click for all region commands");
-            _regions.SelectedIndexChanged += (s, e) =>
+            _regions.SelectedIndexChanged += (s, e) => Safe(() =>
             {
                 if (_updating || _regions.SelectedItems.Count == 0) return;
                 S.ActiveRegion = (Region)_regions.SelectedItems[0].Tag;
                 S.RaiseChanged();
-            };
-            _regions.AfterLabelEdit += (s, e) =>
+            });
+            _regions.AfterLabelEdit += (s, e) => Safe(() =>
             {
                 if (e.Label == null) return;
                 ((Region)_regions.Items[e.Item].Tag).Name = e.Label;
                 BeginInvoke((Action)RefreshAll);
-            };
-            _regions.DoubleClick += (s, e) => _regions.SelectedItems.Cast<ListViewItem>().FirstOrDefault()?.BeginEdit();
+            });
+            _regions.DoubleClick += (s, e) => Safe(() => _regions.SelectedItems.Cast<ListViewItem>().FirstOrDefault()?.BeginEdit());
             _regions.ContextMenuStrip = BuildRegionMenu();
             tReg.Add(toolRow);
             tReg.Add(modeRow);
@@ -334,7 +335,7 @@ namespace MeshFit.SolidWorks
             }
             tFit.Add(typeRow);
             _tolerance = Num(0.001m, 100, 0.2m, 3, "Allowed deviation in mm. Drives Auto type choice, Grow and the deviation colours.");
-            _tolerance.ValueChanged += (s, e) => { ApplyFitSettings(); _legend.Invalidate(); if (S.ShowDeviation || S.ShowCadDeviation) S.RaiseChanged(); };
+            _tolerance.ValueChanged += (s, e) => Safe(() => { ApplyFitSettings(); _legend.Invalidate(); if (S.ShowDeviation || S.ShowCadDeviation) S.RaiseChanged(); });
             var fitGrow = Btn("Fit + grow", () => Execute(Cmd.FitAndGrow),
                 "Fit the active region, extend it to every connected triangle within tolerance of the surface, refit; repeat until it stops growing (Esc cancels).");
             fitGrow.Font = new Font(Font, FontStyle.Bold);
@@ -373,7 +374,7 @@ namespace MeshFit.SolidWorks
                 "Smart fill, Fit + grow and the optimizer stop where a tangent fillet or blend starts");
             _blendRadius = Num(0.5m, 10000, (decimal)(S.BlendRadius * 1000), 1,
                 "Blends tighter than this radius (mm) count as adjacent features. Use roughly 1.5× the largest fillet you want detected.");
-            _blendRadius.ValueChanged += (s, e) => { S.BlendRadius = (double)_blendRadius.Value / 1000; if (S.ShowCurvature) S.RaiseChanged(); };
+            _blendRadius.ValueChanged += (s, e) => Safe(() => { S.BlendRadius = (double)_blendRadius.Value / 1000; if (S.ShowCurvature) S.RaiseChanged(); });
             gf.Add(Row(_stopAtFillets, Lbl("up to R mm"), _blendRadius));
             gf.Add(Row(Btn("Grow to fillets", () => Execute(Cmd.GrowToFillets), "Grow the active region over unpainted triangles until it reaches adjacent fillets or sharp edges"),
                        Btn("Trim fillets", () => Execute(Cmd.TrimFillets), "Remove the part of the active region that runs into adjacent fillets (tangent run-out)")));
@@ -429,7 +430,7 @@ namespace MeshFit.SolidWorks
             _tabs.TabPages.Remove(regPage);
             _tabs.TabPages.Insert(0, regPage);
             try { _tabs.SelectedIndex = Math.Max(0, Math.Min(_tabs.TabCount - 1, LastTab)); } catch { }
-            _tabs.SelectedIndexChanged += (s, e) => LastTab = _tabs.SelectedIndex;
+            _tabs.SelectedIndexChanged += (s, e) => Safe(() => LastTab = _tabs.SelectedIndex);
         }
 
         private static int LastTab = 0;
@@ -508,7 +509,7 @@ namespace MeshFit.SolidWorks
         private Button Btn(string text, Action a, string tip)
         {
             var b = new Button { Text = text, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(1) };
-            b.Click += (s, e) => Guard(a);
+            b.Click += (s, e) => Safe(() => Guard(a));
             _tips.SetToolTip(b, tip);
             return b;
         }
@@ -541,7 +542,7 @@ namespace MeshFit.SolidWorks
         private CheckBox Check(string text, bool value, Action<bool> changed, string tip)
         {
             var c = new CheckBox { Text = text, Checked = value, AutoSize = true };
-            c.CheckedChanged += (s, e) => changed(c.Checked);
+            c.CheckedChanged += (s, e) => Safe(() => changed(c.Checked));
             _tips.SetToolTip(c, tip);
             return c;
         }
@@ -690,7 +691,19 @@ namespace MeshFit.SolidWorks
         {
             if (_busy) { SetStatus("Busy — press Esc to cancel."); return; }
             try { a(); }
-            catch (Exception ex) { SetStatus("Error: " + ex.Message); }
+            catch (Exception ex) { Guarded.Write("Command failed: " + ex); SetStatus("Error: " + ex.Message); }
+        }
+
+        private static void Safe(Action a) => Guarded.Run("task pane", a);
+
+        /// <summary>
+        /// Every BeginInvoke callback (from worker threads, the PropertyManager, the view hook) runs inside this
+        /// window's message handling: an exception escaping here would terminate SOLIDWORKS.
+        /// </summary>
+        protected override void WndProc(ref Message m)
+        {
+            try { base.WndProc(ref m); }
+            catch (Exception ex) { Guarded.Report("task pane message", ex); }
         }
 
         /// <summary>Token of the running background job (cancelled by Esc / the Cancel button).</summary>
@@ -795,15 +808,15 @@ namespace MeshFit.SolidWorks
         private void StartEscWatcher()
         {
             var timer = new Timer { Interval = 80 };
-            timer.Tick += (s, e) =>
+            timer.Tick += (s, e) => Safe(() =>
             {
                 if (_progressPanel.Visible) UpdateProgressDisplay();
                 bool down = EscKey.IsDown();
                 if (down && !_escWasDown) CancelWork();
                 _escWasDown = down;
-            };
+            });
             timer.Start();
-            Disposed += (s, e) => timer.Dispose();
+            Disposed += (s, e) => Safe(() => timer.Dispose());
         }
 
         private void SetStatus(string msg)
@@ -1078,12 +1091,12 @@ namespace MeshFit.SolidWorks
             if (IsDisposed || !S.HasMesh) return;
             if (InvokeRequired) { BeginInvoke((Action)(() => ShowPaintMenu(screen))); return; }
             var m = new ContextMenuStrip { ShowCheckMargin = true, ShowImageMargin = true };
-            m.Closed += (s, e) => BeginInvoke((Action)m.Dispose);
+            m.Closed += (s, e) => Safe(() => BeginInvoke((Action)m.Dispose));
             ToolStripMenuItem Item(ToolStripItemCollection into, string text, Action a, Cmd? icon = null, bool check = false, string tip = null)
             {
                 var it = new ToolStripMenuItem(text) { Checked = check, ToolTipText = tip };
                 if (icon.HasValue) it.Image = CommandIcons.Render(icon.Value, 16, transparent: true);
-                if (a != null) it.Click += (s, e) => Guard(a);
+                if (a != null) it.Click += (s, e) => Safe(() => Guard(a));
                 into.Add(it);
                 return it;
             }
@@ -1167,7 +1180,7 @@ namespace MeshFit.SolidWorks
             row.Controls.Add(new Label { Text = label, AutoSize = true, Margin = new Padding(0, 5, 4, 0) });
             var n = new NumericUpDown { Minimum = min, Maximum = max, DecimalPlaces = decimals, Width = 70 };
             n.Value = Math.Max(min, Math.Min(max, Math.Round(value, decimals)));
-            n.ValueChanged += (s, e) => changed(n.Value);
+            n.ValueChanged += (s, e) => Safe(() => changed(n.Value));
             row.Controls.Add(n);
             return new ToolStripControlHost(row) { ToolTipText = tip, AutoSize = true };
         }
@@ -1216,7 +1229,7 @@ namespace MeshFit.SolidWorks
                 };
                 _settingsBox.Text = "";
                 _settingsForm.Controls.Add(_settingsBox);
-                _settingsForm.FormClosing += (s, e) => { if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; _settingsForm.Hide(); } };
+                _settingsForm.FormClosing += (s, e) => Safe(() => { if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; _settingsForm.Hide(); } });
             }
             if (!_settingsForm.Visible) _settingsForm.Show(_addin.MainWindow);
             _settingsForm.Activate();
@@ -1468,7 +1481,7 @@ namespace MeshFit.SolidWorks
             Run(() =>
             {
                 found = SelectionOptimizer.Explore(S.Mesh, owners, r.Id, opt, Token, curvature, blend,
-                    new Progress<string>(msg => Report(msg, null)));
+                    new Progress<string>(msg => Safe(() => Report(msg, null))));
                 return $"Optimizer tried {found.Count} selections for '{r.Name}'.";
             }, background: true, title: $"Optimizing selection '{r.Name}'", then: () =>
             {
@@ -1517,12 +1530,12 @@ namespace MeshFit.SolidWorks
                 var apply = new Button { Text = "Apply selected", AutoSize = true };
                 tips.SetToolTip(apply, "Replace the region's triangles with the selected alternative (undoable)");
                 tips.SetToolTip(cancel, "Keep the current selection");
-                apply.Click += (s, e) =>
+                apply.Click += (s, e) => Safe(() =>
                 {
                     Chosen = lv.SelectedItems.Count > 0 ? (SelectionCandidate)lv.SelectedItems[0].Tag : null;
                     DialogResult = DialogResult.OK;
-                };
-                lv.DoubleClick += (s, e) => apply.PerformClick();
+                });
+                lv.DoubleClick += (s, e) => Safe(() => apply.PerformClick());
                 bottom.Controls.Add(cancel); bottom.Controls.Add(apply);
                 Controls.Add(lv); Controls.Add(bottom);
                 AcceptButton = apply; CancelButton = cancel;

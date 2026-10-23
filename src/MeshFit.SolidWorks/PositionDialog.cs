@@ -43,8 +43,16 @@ namespace MeshFit.SolidWorks
             MinimumSize = new Size(440, 360);
             Build();
             S.Changed += OnSessionChanged;
-            FormClosed += (s, e) => S.Changed -= OnSessionChanged;
+            FormClosed += (s, e) => Safe(() => S.Changed -= OnSessionChanged);
             RefreshPlacement();
+        }
+
+        private static void Safe(Action a) => Guarded.Run("position dialog", a);
+
+        protected override void WndProc(ref Message m)
+        {
+            try { base.WndProc(ref m); }
+            catch (Exception ex) { Guarded.Report("position dialog", ex); }
         }
 
         private void OnSessionChanged()
@@ -150,11 +158,11 @@ namespace MeshFit.SolidWorks
         private Button Btn(string text, Action a, string tip)
         {
             var b = new Button { Text = text, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-            b.Click += (s, e) =>
+            b.Click += (s, e) => Safe(() =>
             {
                 try { a(); }
                 catch (Exception ex) { Say("Error: " + ex.Message); }
-            };
+            });
             _tips.SetToolTip(b, tip);
             return b;
         }

@@ -33,7 +33,7 @@ namespace MeshFit.SolidWorks
         private readonly SwAddin _addin;
         private Session S => _addin.Session;
         private PropertyManagerPage2 _page;
-        private bool _updating, _open, _reopen;
+        private bool _updating, _building, _open, _reopen;
         private int _closeReason;
 
         private PropertyManagerPageListbox _region;
@@ -81,12 +81,25 @@ namespace MeshFit.SolidWorks
                              swPropertyManagerPageOptions_e.swPropertyManagerOptions_PushpinButton);
             _page = _addin.App.CreatePropertyManagerPage("Reverse Engineer", opts, this, ref err) as PropertyManagerPage2;
             if (_page == null) throw new InvalidOperationException("SOLIDWORKS could not create the PropertyManager page (error " + err + "). Open a part document and try again.");
-            Build();
-            _open = true;
-            S.EnsureRegion();
-            if (S.Tool == PaintTool.None || S.Tool == PaintTool.PickRegion) _addin.SetToolFromPage(PaintTool.SmartFill);
-            Refresh();
-            _page.Show2(0);
+            // SOLIDWORKS fires change notifications while the controls are created and ranged (a number box
+            // reports 0 before its value is set): ignore them until the page shows the session's values.
+            _building = true;
+            try
+            {
+                Build();
+                _open = true;
+                S.EnsureRegion();
+                if (S.Tool == PaintTool.None || S.Tool == PaintTool.PickRegion) _addin.SetToolFromPage(PaintTool.SmartFill);
+                Refresh();
+                _page.Show2(0);
+            }
+            catch
+            {
+                _open = false;
+                _page = null;
+                throw;
+            }
+            finally { _building = false; }
         }
 
         private void Build()
@@ -102,7 +115,7 @@ namespace MeshFit.SolidWorks
             var gf = (PropertyManagerPageGroup)_page.AddGroupBox((int)Id.GFeature, "Regions", vis);
             _region = Add<PropertyManagerPageListbox>(gf, Id.Region, swPropertyManagerPageControlType_e.swControlType_Listbox, "",
                 "All regions: surface type, main size, largest deviation and status (✔ = surface created, ⚠ = outside tolerance). Click to make a region active.");
-            if (_region != null) _region.Height = 120;
+            try { if (_region != null) _region.Height = 120; } catch { /* cosmetic */ }
             _regionSummary = Add<PropertyManagerPageLabel>(gf, Id.RegionSummary, swPropertyManagerPageControlType_e.swControlType_Label, "", "Totals");
             _regionName = Add<PropertyManagerPageTextbox>(gf, Id.RegionName, swPropertyManagerPageControlType_e.swControlType_Textbox, "", "Name of the active region (type to rename)");
             Add<PropertyManagerPageButton>(gf, Id.ClearRegion, swPropertyManagerPageControlType_e.swControlType_Button, "Clear selection", "Unselect every triangle of the active region (Delete key in the view; Undo restores it)");
@@ -155,7 +168,8 @@ namespace MeshFit.SolidWorks
                     }
                     return f;
                 }).ToArray();
-                b.SetBitmapsByName3(files, null);
+                try { b.SetBitmapsByName3(files, null); }
+                catch (Exception ex) { Guarded.Write("Type button bitmaps: " + ex.Message); }
                 _types[id] = b;
             }
             _typeLabel = Add<PropertyManagerPageLabel>(gs, Id.TypeLabel, swPropertyManagerPageControlType_e.swControlType_Label, "Type: Auto", "Surface type for this region");
@@ -166,7 +180,7 @@ namespace MeshFit.SolidWorks
             _stopFillets = Add<PropertyManagerPageCheckbox>(gs, Id.StopFillets, swPropertyManagerPageControlType_e.swControlType_Checkbox, "Stop at fillets", "Growing stops where a tangent fillet / blend starts");
             Add<PropertyManagerPageButton>(gs, Id.FitGrow, swPropertyManagerPageControlType_e.swControlType_Button, "Fit + grow", "Fit the region and grow it over its surface (Esc cancels)");
             _result = Add<PropertyManagerPageLabel>(gs, Id.Result, swPropertyManagerPageControlType_e.swControlType_Label, "Not fitted yet.", "Fit result");
-            if (_result != null) _result.Height = 70;
+            try { if (_result != null) _result.Height = 70; } catch { /* cosmetic */ }
 
             // Create
             var gc = (PropertyManagerPageGroup)_page.AddGroupBox((int)Id.GCreate, "Create (✔ OK)", vis);
@@ -283,88 +297,104 @@ namespace MeshFit.SolidWorks
 
         public void AfterClose()
         {
-            _open = false;
-            _page = null;
-            bool ok = _closeReason == (int)swPropertyManagerPageCloseReasons_e.swPropertyManagerPageClose_Okay ||
-                      _closeReason == (int)swPropertyManagerPageCloseReasons_e.swPropertyManagerPageClose_Apply;
-            if (ok)
+            Guarded.Run("page AfterClose", () =>
             {
-                // Create after the page has gone (SOLIDWORKS is idle again), then reopen for the next feature.
-                _reopen = NextAfterOk;
-                bool next = _reopen;
-                _addin.Post(() => _addin.CreateFromPage(Create, next, created => { if (created && next) _addin.Post(Show); }));
-            }
-            else _addin.SetToolFromPage(PaintTool.None);
+                _open = false;
+                _page = null;
+                bool ok = _closeReason == (int)swPropertyManagerPageCloseReasons_e.swPropertyManagerPageClose_Okay ||
+                          _closeReason == (int)swPropertyManagerPageCloseReasons_e.swPropertyManagerPageClose_Apply;
+                if (ok)
+                {
+                    // Create after the page has gone (SOLIDWORKS is idle again), then reopen for the next feature.
+                    _reopen = NextAfterOk;
+                    bool next = _reopen;
+                    _addin.Post(() => _addin.CreateFromPage(Create, next, created => { if (created && next) _addin.Post(Show); }));
+                }
+                else _addin.SetToolFromPage(PaintTool.None);
+            });
         }
 
         public void OnButtonPress(int id)
         {
-            if (id >= (int)Id.TypeAuto && id <= (int)Id.TypeFree) { TypeClicked(id); return; }
-            switch ((Id)id)
+            Guarded.Run("page OnButtonPress", () =>
             {
-                case Id.NewRegion: _addin.Do(Cmd.NewRegion); break;
-                case Id.DeleteRegion: _addin.DeleteActiveRegion(); break;
-                case Id.ClearRegion: _addin.Do(Cmd.ClearRegion); break;
-                case Id.FillIslands: _addin.Do(Cmd.FillIslands); break;
-                case Id.CleanUp: _addin.Do(Cmd.CleanUp); break;
-                case Id.GrowRing: _addin.Do(Cmd.GrowRing); break;
-                case Id.ShrinkRing: _addin.Do(Cmd.ShrinkRing); break;
-                case Id.FitGrow: _addin.Do(Cmd.FitAndGrow); break;
-            }
+                if (id >= (int)Id.TypeAuto && id <= (int)Id.TypeFree) { TypeClicked(id); return; }
+                switch ((Id)id)
+                {
+                    case Id.NewRegion: _addin.Do(Cmd.NewRegion); break;
+                    case Id.DeleteRegion: _addin.DeleteActiveRegion(); break;
+                    case Id.ClearRegion: _addin.Do(Cmd.ClearRegion); break;
+                    case Id.FillIslands: _addin.Do(Cmd.FillIslands); break;
+                    case Id.CleanUp: _addin.Do(Cmd.CleanUp); break;
+                    case Id.GrowRing: _addin.Do(Cmd.GrowRing); break;
+                    case Id.ShrinkRing: _addin.Do(Cmd.ShrinkRing); break;
+                    case Id.FitGrow: _addin.Do(Cmd.FitAndGrow); break;
+                }
+            });
         }
 
         public void OnOptionCheck(int id)
         {
-            if (_updating) return;
-            switch ((Id)id)
+            Guarded.Run("page OnOptionCheck", () =>
             {
-                case Id.OptSmart: _addin.SetToolFromPage(PaintTool.SmartFill); break;
-                case Id.OptBrush: _addin.SetToolFromPage(PaintTool.Brush); break;
-                case Id.OptFillet: _addin.SetToolFromPage(PaintTool.Fillet); break;
-                case Id.OptShell: _addin.SetToolFromPage(PaintTool.FillConnected); break;
-                case Id.OptPick: _addin.SetToolFromPage(PaintTool.PickRegion); break;
-                case Id.OptOff: _addin.SetToolFromPage(PaintTool.None); break;
-                case Id.CreateSurface: Create = CreateKind.Surface; break;
-                case Id.CreateExtrude: Create = CreateKind.Extrude; break;
-                case Id.CreateRevolve: Create = CreateKind.Revolve; break;
-            }
+                if (_updating || _building) return;
+                switch ((Id)id)
+                {
+                    case Id.OptSmart: _addin.SetToolFromPage(PaintTool.SmartFill); break;
+                    case Id.OptBrush: _addin.SetToolFromPage(PaintTool.Brush); break;
+                    case Id.OptFillet: _addin.SetToolFromPage(PaintTool.Fillet); break;
+                    case Id.OptShell: _addin.SetToolFromPage(PaintTool.FillConnected); break;
+                    case Id.OptPick: _addin.SetToolFromPage(PaintTool.PickRegion); break;
+                    case Id.OptOff: _addin.SetToolFromPage(PaintTool.None); break;
+                    case Id.CreateSurface: Create = CreateKind.Surface; break;
+                    case Id.CreateExtrude: Create = CreateKind.Extrude; break;
+                    case Id.CreateRevolve: Create = CreateKind.Revolve; break;
+                }
+            });
         }
 
         public void OnCheckboxCheck(int id, bool check)
         {
-            if (_updating) return;
-            if (id >= (int)Id.TypeAuto && id <= (int)Id.TypeFree) { TypeClicked(id); return; }
-            switch ((Id)id)
+            Guarded.Run("page OnCheckboxCheck", () =>
             {
-                case Id.Remove: S.RemoveMode = check; _addin.Redraw(); break;
-                case Id.Clean:
-                    S.Idealize.RoundDimensions = S.Idealize.SnapToAxes = S.Idealize.SnapToFeatures = S.Idealize.Tangency = check;
-                    break;
-                case Id.StopFillets: S.StopAtFillets = check; break;
-                case Id.NextAfterOk: NextAfterOk = check; break;
-                case Id.ShowDeviation: S.ShowDeviation = check; break;
-                case Id.ShowCurvature: S.ShowCurvature = check; break;
-                case Id.ShowPreview: S.ShowPreview = check; break;
-                case Id.ShowMesh: S.ShowMesh = check; break;
-            }
-            S.RaiseChanged();
+                if (_updating || _building) return;
+                if (id >= (int)Id.TypeAuto && id <= (int)Id.TypeFree) { TypeClicked(id); return; }
+                switch ((Id)id)
+                {
+                    case Id.Remove: S.RemoveMode = check; _addin.Redraw(); break;
+                    case Id.Clean:
+                        S.Idealize.RoundDimensions = S.Idealize.SnapToAxes = S.Idealize.SnapToFeatures = S.Idealize.Tangency = check;
+                        break;
+                    case Id.StopFillets: S.StopAtFillets = check; break;
+                    case Id.NextAfterOk: NextAfterOk = check; break;
+                    case Id.ShowDeviation: S.ShowDeviation = check; break;
+                    case Id.ShowCurvature: S.ShowCurvature = check; break;
+                    case Id.ShowPreview: S.ShowPreview = check; break;
+                    case Id.ShowMesh: S.ShowMesh = check; break;
+                }
+                S.RaiseChanged();
+            });
         }
 
         public void OnNumberboxChanged(int id, double value)
         {
-            if (_updating) return;
-            switch ((Id)id)
+            Guarded.Run("page OnNumberboxChanged", () =>
             {
-                case Id.Diameter: S.BrushRadius = value / 2; _addin.Redraw(); break;
-                case Id.Angle: S.SmartAngleDeg = value * 180 / Math.PI; break;
-                case Id.Tolerance: _addin.SetTolerance(value); break;
-            }
+                if (_updating || _building) return;
+                if (value <= 0) return;
+                switch ((Id)id)
+                {
+                    case Id.Diameter: S.BrushRadius = value / 2; _addin.Redraw(); break;
+                    case Id.Angle: S.SmartAngleDeg = value * 180 / Math.PI; break;
+                    case Id.Tolerance: _addin.SetTolerance(value); break;
+                }
+            });
         }
 
         public void OnComboboxSelectionChanged(int id, int item) { }
 
-        public void OnUndo() => _addin.Do(Cmd.Undo);
-        public void OnRedo() => _addin.Do(Cmd.Redo);
+        public void OnUndo() => Guarded.Run("page OnUndo", () => _addin.Do(Cmd.Undo));
+        public void OnRedo() => Guarded.Run("page OnRedo", () => _addin.Do(Cmd.Redo));
 
         // Bitmap buttons report through OnButtonPress in some versions and OnCheckboxCheck in others: handle both.
         private void TypeClicked(int id)
@@ -378,16 +408,22 @@ namespace MeshFit.SolidWorks
         public void OnGroupCheck(int id, bool check) { }
         public void OnTextboxChanged(int id, string text)
         {
-            if (_updating || (Id)id != Id.RegionName || S.ActiveRegion == null || string.IsNullOrWhiteSpace(text)) return;
-            S.ActiveRegion.Name = text.Trim();
-            S.RaiseChanged();
+            Guarded.Run("page OnTextboxChanged", () =>
+            {
+                if (_updating || _building || (Id)id != Id.RegionName || S.ActiveRegion == null || string.IsNullOrWhiteSpace(text)) return;
+                S.ActiveRegion.Name = text.Trim();
+                S.RaiseChanged();
+            });
         }
         public void OnComboboxEditChanged(int id, string text) { }
         public void OnListboxSelectionChanged(int id, int item)
         {
-            if (_updating || (Id)id != Id.Region || S.Regions == null) return;
-            var regions = S.Regions.Regions.ToList();
-            if (item >= 0 && item < regions.Count && regions[item] != S.ActiveRegion) { S.ActiveRegion = regions[item]; S.RaiseChanged(); }
+            Guarded.Run("page OnListboxSelectionChanged", () =>
+            {
+                if (_updating || _building || (Id)id != Id.Region || S.Regions == null) return;
+                var regions = S.Regions.Regions.ToList();
+                if (item >= 0 && item < regions.Count && regions[item] != S.ActiveRegion) { S.ActiveRegion = regions[item]; S.RaiseChanged(); }
+            });
         }
         public void OnSelectionboxFocusChanged(int id) { }
         public void OnSelectionboxListChanged(int id, int count) { }

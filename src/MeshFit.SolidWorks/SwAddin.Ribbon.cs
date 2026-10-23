@@ -154,6 +154,12 @@ namespace MeshFit.SolidWorks
         /// <summary>0 = disabled, 1 = enabled, 3 = enabled and pressed (current tool / mode / type).</summary>
         private int RibbonEnable(Cmd c)
         {
+            try { return RibbonEnableCore(c); }
+            catch (Exception ex) { Guarded.Write($"Ribbon enable {c}: {ex}"); return 1; }
+        }
+
+        private int RibbonEnableCore(Cmd c)
+        {
             var s = Session;
             switch (c)
             {

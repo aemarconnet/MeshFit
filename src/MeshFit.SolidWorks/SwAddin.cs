@@ -64,6 +64,8 @@ namespace MeshFit.SolidWorks
             try
             {
                 _app = (ISldWorks)thisSw;
+                Guarded.Write($"MeshFit {typeof(SwAddin).Assembly.GetName().Version} connecting to SOLIDWORKS {_app.RevisionNumber()}");
+                AppDomain.CurrentDomain.UnhandledException += (s, e) => Guarded.Write("UNHANDLED (terminating=" + e.IsTerminating + "): " + e.ExceptionObject);
                 _cookie = cookie;
                 _app.SetAddinCallbackInfo2(0, this, cookie);
                 _math = (IMathUtility)_app.GetMathUtility();
@@ -183,13 +185,13 @@ namespace MeshFit.SolidWorks
             Session.Curvature = null;
             Session.Say("Analysing curvature for fillet detection… (Esc cancels)");
             int lastPct = -1;
-            var progress = new Progress<double>(f =>
+            var progress = new Progress<double>(f => Guarded.Run("curvature progress", () =>
             {
                 int pct = (int)(f * 100);
                 if (pct / 10 == lastPct / 10 || cts.IsCancellationRequested) return;
                 lastPct = pct;
                 Session.Say($"Analysing curvature for fillet detection… {pct}% (Esc cancels)");
-            });
+            }));
             System.Threading.Tasks.Task.Run(() => Curvature.Compute(mesh, scale, cts.Token, progress), cts.Token).ContinueWith(t =>
             {
                 if (_curvatureCts == cts) _curvatureCts = null;
@@ -222,6 +224,7 @@ namespace MeshFit.SolidWorks
             Session.MeshPath = path;
             Session.MeshScale = scaleToMetres;
             Session.ShowMesh = true;
+            Guarded.Write($"Installing mesh {path}: {mesh.TriangleCount:N0} triangles");
             Session.SetMesh(mesh, $"{Path.GetFileName(path)}: {mesh.TriangleCount:N0} triangles");
             ComputeCurvature();
             AttachToActiveView(createPartIfNeeded: true);

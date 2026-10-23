@@ -355,6 +355,15 @@ tests/MeshFit.Core.Tests xUnit tests: fitters on synthetic noisy data, NURBS exa
 
 Run the tests with `dotnet test`.
 
+## Troubleshooting
+
+MeshFit writes a log to `%LOCALAPPDATA%\MeshFit\MeshFit.log`. The log records:
+- Startup, mesh loading, and opening the Reverse Engineer page.
+- Every internal error, with its stack trace.
+
+Errors inside MeshFit are caught and shown in the status bar instead of closing SOLIDWORKS. If
+something goes wrong, send the end of this file.
+
 ## Status and known limitations
 
 **What has been tested**

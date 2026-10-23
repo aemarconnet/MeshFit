@@ -18,9 +18,15 @@ namespace MeshFit.SolidWorks
                 _page = new ReverseEngineerPage(this);
                 Session.Changed += QueuePageRefresh;
             }
-            try { _page.Show(); }
+            try
+            {
+                Guarded.Write("Opening the Reverse Engineer page");
+                _page.Show();
+                Guarded.Write("Reverse Engineer page open");
+            }
             catch (Exception ex)
             {
+                Guarded.Write("Reverse Engineer page failed: " + ex);
                 // Never fail silently: the ribbon button would look unwired.
                 MessageBox.Show(MainWindow, "The Reverse Engineer page could not be opened:\n" + ex.Message, "MeshFit",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -38,8 +44,9 @@ namespace MeshFit.SolidWorks
         /// <summary>Runs an action later on the SOLIDWORKS UI thread (after the current callback returns).</summary>
         internal void Post(Action a)
         {
-            if (_control != null && _control.IsHandleCreated) _control.BeginInvoke(a);
-            else a();
+            Action safe = () => Guarded.Run("posted action", a);
+            if (_control != null && _control.IsHandleCreated) _control.BeginInvoke(safe);
+            else safe();
         }
 
         internal void Do(Cmd c) => _control?.Execute(c);

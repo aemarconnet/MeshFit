@@ -107,10 +107,16 @@ namespace MeshFit.SolidWorks
         private void Menu(Cmd c)
         {
             try { _control?.Execute(c); }
-            catch (Exception ex) { Session.Say("Error: " + ex.Message); }
+            catch (Exception ex) { Guarded.Report(c.ToString(), ex); }
         }
 
         private int Enable(Cmd c)
+        {
+            try { return EnableCore(c); }
+            catch (Exception ex) { Guarded.Write($"Enable {c}: {ex}"); return 1; }
+        }
+
+        private int EnableCore(Cmd c)
         {
             if (!Session.HasMesh) return 4;
             switch (c)

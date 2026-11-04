@@ -54,6 +54,10 @@ Check runs with the GitHub tools available to you (the previous agent used the G
    generates notes.
 3. Commit, push the branch, and wait for the CI build to go green.
 4. `git tag -a vX.Y.Z -m "MeshFit vX.Y.Z" && git push origin vX.Y.Z`.
+   - **If your git access can't push tags** (HTTP 403, as for the agent that made v0.2.0), run
+     the workflow manually on the branch with input `tag = vX.Y.Z`: Actions → release → *Run
+     workflow*, or the GitHub API `workflow_dispatch`. The workflow then creates the tag at the
+     branch head itself.
 5. The workflow:
    - tests, then builds the add-in with `-p:Version=X.Y.Z`;
    - zips `bin/Release/net48` plus `README.md` as `MeshFit-SolidWorks-addin-<tag>.zip`;

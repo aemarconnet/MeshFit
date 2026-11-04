@@ -48,8 +48,13 @@ dotnet run --project tools/ApiInspector -- IModelDoc2 Sketch   # check an API si
 ```
 
 CI (`.github/workflows/ci.yml`, windows-latest) runs the tests and builds the add-in. It uploads the
-`MeshFit-SolidWorks-addin` artifact. The user downloads that artifact, copies it to a folder and runs
-`register.bat` as administrator.
+`MeshFit-SolidWorks-addin` artifact.
+
+**Releases:** pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`. It builds, zips and
+publishes a GitHub Release with notes from `docs/release-notes/<tag>.md` (see document 08).
+
+The user downloads the release zip (or a CI artifact), copies it to a folder and runs `register.bat`
+as administrator.
 
 ## Rules that must not be broken
 

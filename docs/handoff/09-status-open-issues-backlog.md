@@ -1,6 +1,7 @@
 # 09 · Status, open issues and backlog
 
-State at commit `584c5d1` plus this handoff, on branch `ccr-d21e0b16-x4gm1v`.
+State at commit `584c5d1` plus this handoff, on branch `ccr-d21e0b16-x4gm1v`. Published as GitHub
+pre-release **v0.2.0** (see `docs/release-notes/v0.2.0.md`).
 
 ## Verification status
 

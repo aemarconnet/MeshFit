@@ -43,6 +43,27 @@ The actions are on Node-24 versions (`checkout@v6`, `setup-dotnet@v5`, `upload-a
 Check runs with the GitHub tools available to you (the previous agent used the GitHub MCP
 `actions_list` on `aemarconnet/meshfit`).
 
+## Releases
+
+`.github/workflows/release.yml` builds and publishes a GitHub Release when a tag `v<major>.<minor>.<patch>`
+(optionally `-suffix`) is pushed. It can also be run manually with a tag input.
+
+1. Bump `<Version>` in `Directory.Build.props`. The workflow also passes the tag's version to the
+   build, so the log's start-up line shows it.
+2. Write `docs/release-notes/<tag>.md`, in plain language for the user. If it's missing, GitHub
+   generates notes.
+3. Commit, push the branch, and wait for the CI build to go green.
+4. `git tag -a vX.Y.Z -m "MeshFit vX.Y.Z" && git push origin vX.Y.Z`.
+5. The workflow:
+   - tests, then builds the add-in with `-p:Version=X.Y.Z`;
+   - zips `bin/Release/net48` plus `README.md` as `MeshFit-SolidWorks-addin-<tag>.zip`;
+   - runs `gh release create` with the notes.
+6. Versions below 1.0 and suffixed tags are marked **pre-release**.
+7. Check the run (Actions → release) and the Releases page. Tell the user the download link and what
+   to test.
+
+Released so far: **v0.2.0** (first packaged release, pre-release).
+
 ## How the user installs and tests
 
 1. Downloads the CI artifact for the latest successful run and unzips it to a permanent folder.

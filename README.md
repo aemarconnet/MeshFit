@@ -93,16 +93,30 @@ that doesn't match, MeshFit falls back to an exact rational B-spline.
 
 Requirements: SOLIDWORKS 2018 or newer (64-bit) and .NET Framework 4.8.
 
-1. Get the binaries. Use either of these:
+1. Get the binaries. Use one of these:
+   - **Recommended:** download `MeshFit-SolidWorks-addin-<version>.zip` from the latest release on
+     the GitHub **Releases** page and unzip it.
    - Download the `MeshFit-SolidWorks-addin` artifact from the latest successful **build** workflow
-     run on GitHub (Actions tab).
+     run on GitHub (Actions tab). These are untested in-between builds.
    - Build them yourself: `dotnet build src/MeshFit.SolidWorks -c Release`. You need the .NET 8 SDK.
      The output is in `src/MeshFit.SolidWorks/bin/Release/net48/`.
-2. Copy that folder to a permanent location, for example `C:\Tools\MeshFit\`.
+2. Copy that folder to a permanent location, for example `C:\Tools\MeshFit\`. SOLIDWORKS loads the
+   DLL from there every time it starts.
 3. Right-click `register.bat` and choose **Run as administrator**. The script unblocks the
    downloaded files and registers the DLL with `RegAsm /codebase`.
-4. Start SOLIDWORKS. The **MeshFit** tab appears in the task pane. If it doesn't, enable MeshFit
-   under *Tools > Add-Ins*.
+4. Start SOLIDWORKS. The **MeshFit** tab appears on the CommandManager ribbon of part documents,
+   and the MeshFit task pane is on the right. If neither appears, enable MeshFit under *Tools >
+   Add-Ins*.
+
+**Upgrading:**
+1. Close SOLIDWORKS.
+2. Replace the files in the same folder, or unzip the new version to a new folder.
+3. Run the new `register.bat` as administrator. It points SOLIDWORKS at the new location.
+4. If the MeshFit ribbon tab still shows old buttons after a restart, right-click the CommandManager
+   tabs, hide the MeshFit tab and show it again. If that doesn't help, reset the CommandManager
+   layout from *Tools > Customize*.
+
+The first line of `%LOCALAPPDATA%\MeshFit\MeshFit.log` after a start shows the running version.
 
 To uninstall, run `unregister.bat` as administrator.
 
@@ -390,6 +404,7 @@ src/MeshFit.SolidWorks   net48 COM add-in: MeshFit ribbon tab, PropertyManager p
                          Surface Primitives / Extrusion / Revolution / Mesh Fit wizards, Mesh Sketch),
                          task pane, OpenGL overlay, mouse picking, SOLIDWORKS feature creation
 docs/                    workflow-comparison.html: UI comparison with the established tools
+docs/release-notes/      notes for each GitHub release (vX.Y.Z.md)
 docs/handoff/            handoff for developers / AI agents: goals, history, architecture, algorithms,
                          SOLIDWORKS integration, crash safety, process, status and backlog
 tools/                   ApiInspector (SOLIDWORKS interop signatures offline), swhelp.py (API help text),
